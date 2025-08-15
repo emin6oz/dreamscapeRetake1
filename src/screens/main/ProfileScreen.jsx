@@ -1,12 +1,13 @@
 import React from 'react'
-import { User, Settings, Bell, Moon, Smartphone, LogOut, Info } from 'lucide-react'
+import { User, Settings, Bell, Moon, Smartphone, LogOut, Info, TestTube, Zap } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import useSleepTracking from '../../hooks/useSleepTracking'
 import Button from '../../components/common/Button'
+import { notificationManager, vibrationManager } from '../../utils/notifications'
 
 const ProfileScreen = () => {
   const { user, logout } = useAuth()
-  const { settings, updateSetting } = useSleepTracking()
+  const { settings, updateSetting, testNotification, testVibration } = useSleepTracking()
 
   const handleToggleSetting = (key) => {
     updateSetting(key, !settings[key])
@@ -16,6 +17,37 @@ const ProfileScreen = () => {
     if (window.confirm('Are you sure you want to logout?')) {
       logout()
     }
+  }
+
+  // Test notification system
+  const handleTestNotification = async () => {
+    const permission = await notificationManager.requestPermission()
+    if (permission) {
+      testNotification()
+    } else {
+      alert('Please enable notifications in your browser settings to test this feature.')
+    }
+  }
+
+  // Test vibration system
+  const handleTestVibration = () => {
+    if (vibrationManager.isVibrationSupported()) {
+      testVibration()
+    } else {
+      alert('Vibration is not supported on this device.')
+    }
+  }
+
+  // Get notification permission status
+  const getNotificationStatus = () => {
+    if (!('Notification' in window)) return 'Not supported'
+    return Notification.permission === 'granted' ? 'Enabled' : 
+           Notification.permission === 'denied' ? 'Blocked' : 'Not requested'
+  }
+
+  // Get vibration support status
+  const getVibrationStatus = () => {
+    return vibrationManager.isVibrationSupported() ? 'Supported' : 'Not supported'
   }
 
   return (
@@ -42,7 +74,7 @@ const ProfileScreen = () => {
             
             {/* Notifications Toggle */}
             <div className="bg-gray-800 rounded-2xl p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center">
                   <Bell className="w-5 h-5 text-blue-400 mr-3" />
                   <div>
@@ -61,11 +93,20 @@ const ProfileScreen = () => {
                   } mt-0.5`} />
                 </button>
               </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500">Status: {getNotificationStatus()}</span>
+                <button
+                  onClick={handleTestNotification}
+                  className="text-blue-400 hover:text-blue-300 underline"
+                >
+                  Test
+                </button>
+              </div>
             </div>
 
             {/* Vibration Toggle */}
             <div className="bg-gray-800 rounded-2xl p-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center">
                   <Smartphone className="w-5 h-5 text-green-400 mr-3" />
                   <div>
@@ -84,7 +125,17 @@ const ProfileScreen = () => {
                   } mt-0.5`} />
                 </button>
               </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-gray-500">Status: {getVibrationStatus()}</span>
+                <button
+                  onClick={handleTestVibration}
+                  className="text-green-400 hover:text-green-300 underline"
+                >
+                  Test
+                </button>
+              </div>
             </div>
+
 
             {/* Sleep Reminders Toggle */}
             <div className="bg-gray-800 rounded-2xl p-4">
@@ -93,7 +144,7 @@ const ProfileScreen = () => {
                   <Moon className="w-5 h-5 text-yellow-400 mr-3" />
                   <div>
                     <span className="font-medium">Sleep Reminders</span>
-                    <p className="text-xs text-gray-400">Remind me when it's bedtime</p>
+                    <p className="text-xs text-gray-400">Remind me 30min before bedtime</p>
                   </div>
                 </div>
                 <button
@@ -108,6 +159,37 @@ const ProfileScreen = () => {
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* Feature Testing Section */}
+          <div className="bg-gray-800 rounded-2xl p-4 mb-8">
+            <h3 className="font-semibold mb-4 flex items-center">
+              <TestTube className="w-5 h-5 mr-2 text-yellow-400" />
+              Test Features
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <Button
+                onClick={handleTestNotification}
+                variant="secondary"
+                size="sm"
+                className="text-xs"
+              >
+                <Bell className="w-4 h-4 mr-1" />
+                Test Notification
+              </Button>
+              <Button
+                onClick={handleTestVibration}
+                variant="secondary"
+                size="sm"
+                className="text-xs"
+              >
+                <Zap className="w-4 h-4 mr-1" />
+                Test Vibration
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">
+              Use these buttons to test if notifications and vibrations work on your device.
+            </p>
           </div>
 
           {/* App Info Section */}

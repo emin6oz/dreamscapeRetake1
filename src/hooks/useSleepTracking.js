@@ -1,6 +1,9 @@
+// Update src/hooks/useSleepTracking.js
+
 import { useState, useEffect, useRef } from 'react'
 import { saveToStorage, getFromStorage } from '../utils/storage'
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../utils/constants'
+import { notificationManager, vibrationManager } from '../utils/notifications'
 
 const useSleepTracking = () => {
   const [sleepTime, setSleepTime] = useState(DEFAULT_SETTINGS.sleepTime)
@@ -14,6 +17,7 @@ const useSleepTracking = () => {
   const movementRef = useRef([])
   const trackingIntervalRef = useRef(null)
   const alarmTimeoutRef = useRef(null)
+  const bedtimeReminderRef = useRef(null)
 
   // Load data from storage on mount
   useEffect(() => {
@@ -29,7 +33,77 @@ const useSleepTracking = () => {
       setSleepTime(savedSettings.sleepTime || DEFAULT_SETTINGS.sleepTime)
       setWakeTime(savedSettings.wakeTime || DEFAULT_SETTINGS.wakeTime)
     }
+
+    // Request notification permission
+    if (savedSettings?.notifications !== false) {
+      notificationManager.requestPermission()
+    }
   }, [])
+
+  // Set up bedtime reminders
+  useEffect(() => {
+    if (settings.sleepReminders && settings.notifications) {
+      setupBedtimeReminder()
+    } else {
+      clearBedtimeReminder()
+    }
+
+    return () => clearBedtimeReminder()
+  }, [settings.sleepReminders, settings.notifications, sleepTime])
+
+  // Setup bedtime reminder
+  const setupBedtimeReminder = () => {
+    clearBedtimeReminder()
+
+    const [sleepHours, sleepMinutes] = sleepTime.split(':').map(Number)
+    const now = new Date()
+    const reminderTime = new Date()
+    
+    // Set reminder 30 minutes before bedtime
+    reminderTime.setHours(sleepHours, sleepMinutes - 30, 0, 0)
+    
+    // If reminder time has passed today, set for tomorrow
+    if (reminderTime <= now) {
+      reminderTime.setDate(reminderTime.getDate() + 1)
+    }
+
+    const timeUntilReminder = reminderTime.getTime() - now.getTime()
+
+    bedtimeReminderRef.current = setTimeout(() => {
+      if (settings.notifications) {
+        notificationManager.showBedtimeReminder(formatTime12Hour(sleepTime))
+      }
+      if (settings.vibration) {
+        vibrationManager.notificationVibration()
+      }
+      
+      // Set up next day's reminder
+      setupBedtimeReminder()
+    }, timeUntilReminder)
+  }
+
+  // Clear bedtime reminder
+  const clearBedtimeReminder = () => {
+    if (bedtimeReminderRef.current) {
+      clearTimeout(bedtimeReminderRef.current)
+      bedtimeReminderRef.current = null
+    }
+  }
+
+  // Format time to 12-hour format
+  const formatTime12Hour = (timeStr) => {
+    if (timeStr === '00:00') return '12:00 AM'
+    
+    try {
+      return new Date(`2024-01-01T${timeStr}`).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+    } catch (error) {
+      return timeStr
+    }
+  }
 
   // Save settings to storage
   const saveSettings = (newSettings = null) => {
@@ -39,8 +113,27 @@ const useSleepTracking = () => {
   }
 
   // Update individual setting
-  const updateSetting = (key, value) => {
+  const updateSetting = async (key, value) => {
     const newSettings = { ...settings, [key]: value }
+    
+    // Handle notification permission
+    if (key === 'notifications' && value === true) {
+      const granted = await notificationManager.requestPermission()
+      if (!granted) {
+        alert('Notification permission is required for alerts. Please enable it in your browser settings.')
+        return
+      }
+    }
+
+    // Test vibration when enabled
+    if (key === 'vibration' && value === true) {
+      if (vibrationManager.isVibrationSupported()) {
+        vibrationManager.notificationVibration()
+      } else {
+        alert('Vibration is not supported on this device.')
+      }
+    }
+
     saveSettings(newSettings)
   }
 
@@ -87,7 +180,7 @@ const useSleepTracking = () => {
   }
 
   // Start sleep tracking
-  const startSleepTracking = () => {
+  const startSleepTracking = async () => {
     setIsTracking(true)
     setAlarmSet(true)
     saveSettings()
@@ -102,15 +195,26 @@ const useSleepTracking = () => {
       isActive: true
     }
 
+    // Show tracking started notification
+    if (settings.notifications) {
+      notificationManager.showSleepTrackingStarted()
+    }
+
+    // Gentle vibration when starting
+    if (settings.vibration) {
+      vibrationManager.notificationVibration()
+    }
+
     // Request motion permission if needed
     if (typeof DeviceMotionEvent.requestPermission === 'function') {
-      DeviceMotionEvent.requestPermission()
-        .then(response => {
-          if (response === 'granted') {
-            startMovementTracking()
-          }
-        })
-        .catch(console.error)
+      try {
+        const response = await DeviceMotionEvent.requestPermission()
+        if (response === 'granted') {
+          startMovementTracking()
+        }
+      } catch (error) {
+        console.error('Motion permission error:', error)
+      }
     } else {
       startMovementTracking()
     }
@@ -145,15 +249,20 @@ const useSleepTracking = () => {
       setAlarmSet(false)
       
       // Wake user with vibration and notification
-      if (settings.vibration && navigator.vibrate) {
-        navigator.vibrate([1000, 500, 1000, 500, 1000])
+      if (settings.vibration) {
+        vibrationManager.wakeUpVibration()
       }
       
-      if (settings.notifications && 'Notification' in window && Notification.permission === 'granted') {
-        new Notification('Good Morning! 🌅', {
-          body: 'Time to wake up! Your sleep has been tracked.',
-          icon: '/icons/icon-192x192.png'
-        })
+      if (settings.notifications) {
+        notificationManager.showWakeUpNotification()
+      }
+
+      // Fallback audio alert (optional)
+      try {
+        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAAB...')
+        audio.play()
+      } catch (error) {
+        console.log('Audio alert not available')
       }
     }, timeUntilWake)
   }
@@ -170,38 +279,33 @@ const useSleepTracking = () => {
     if (alarmTimeoutRef.current) {
       clearTimeout(alarmTimeoutRef.current)
     }
+
+    // Stop any ongoing vibrations
+    vibrationManager.stopVibration()
   }
 
   // Calculate sleep statistics
   const calculateStats = () => {
-  if (sleepData.length === 0) return null
+    if (sleepData.length === 0) return null
 
-  const completedSessions = sleepData.filter(session => !session.isActive)
-  const totalSleep = completedSessions.reduce((sum, session) => sum + (session.duration || 0), 0)
-  const averageSleep = totalSleep / completedSessions.length || 0
-  const lastWeekData = completedSessions.slice(-7)
-  const weeklyAverage = lastWeekData.reduce((sum, session) => sum + (session.duration || 0), 0) / lastWeekData.length || 0
+    const completedSessions = sleepData.filter(session => !session.isActive)
+    const totalSleep = completedSessions.reduce((sum, session) => sum + (session.duration || 0), 0)
+    const averageSleep = totalSleep / completedSessions.length || 0
+    const lastWeekData = completedSessions.slice(-7)
+    const weeklyAverage = lastWeekData.reduce((sum, session) => sum + (session.duration || 0), 0) / lastWeekData.length || 0
 
-  // Get all durations for min/max calculations
-  const durations = completedSessions.map(s => s.duration || 0).filter(d => d > 0)
-  
-  return {
-    totalSessions: completedSessions.length,
-    averageSleep: Math.round(averageSleep * 100) / 100, // 2 decimal places
-    weeklyAverage: Math.round(weeklyAverage * 100) / 100, // 2 decimal places
-    lastSleep: Math.round((completedSessions[completedSessions.length - 1]?.duration || 0) * 100) / 100,
-    totalHours: Math.round(totalSleep * 100) / 100,
-    longestSleep: durations.length > 0 ? Math.round(Math.max(...durations) * 100) / 100 : 0,
-    shortestSleep: durations.length > 0 ? Math.round(Math.min(...durations) * 100) / 100 : 0
-  }
-}
+    const durations = completedSessions.map(s => s.duration || 0).filter(d => d > 0)
 
-  // Request notification permission
-  useEffect(() => {
-    if (settings.notifications && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission()
+    return {
+      totalSessions: completedSessions.length,
+      averageSleep: Math.round(averageSleep * 100) / 100,
+      weeklyAverage: Math.round(weeklyAverage * 100) / 100,
+      lastSleep: Math.round((completedSessions[completedSessions.length - 1]?.duration || 0) * 100) / 100,
+      totalHours: Math.round(totalSleep * 100) / 100,
+      longestSleep: durations.length > 0 ? Math.round(Math.max(...durations) * 100) / 100 : 0,
+      shortestSleep: durations.length > 0 ? Math.round(Math.min(...durations) * 100) / 100 : 0
     }
-  }, [settings.notifications])
+  }
 
   return {
     sleepTime,
@@ -217,7 +321,10 @@ const useSleepTracking = () => {
     stopSleepTracking,
     calculateStats,
     updateSetting,
-    saveSettings
+    saveSettings,
+    // Expose notification and vibration managers for manual testing
+    testNotification: () => notificationManager.showNotification('Test Notification', { body: 'This is a test!' }),
+    testVibration: () => vibrationManager.notificationVibration()
   }
 }
 
