@@ -1,4 +1,4 @@
-// Update src/hooks/useSleepTracking.js
+// Updated useSleepTracking.js - Fixed movement tracking
 
 import { useState, useEffect, useRef } from 'react'
 import { saveToStorage, getFromStorage } from '../utils/storage'
@@ -18,6 +18,16 @@ const useSleepTracking = () => {
   const trackingIntervalRef = useRef(null)
   const alarmTimeoutRef = useRef(null)
   const bedtimeReminderRef = useRef(null)
+  
+  // NEW: Movement sampling variables
+  const lastSampleTimeRef = useRef(0)
+  const currentMovementRef = useRef(0)
+  const movementSamplesRef = useRef([])
+
+  // SAMPLING CONFIGURATION
+  const SAMPLE_INTERVAL = 30000 // Sample every 30 seconds instead of 60 times per second
+  const MOVEMENT_THRESHOLD = 0.5 // Threshold for detecting significant movement
+  const RESTLESS_THRESHOLD = 2.0 // Higher threshold for "restless" periods
 
   // Load data from storage on mount
   useEffect(() => {
@@ -137,9 +147,14 @@ const useSleepTracking = () => {
     saveSettings(newSettings)
   }
 
-  // Movement tracking using accelerometer
+  // FIXED: Movement tracking with proper sampling
   const startMovementTracking = () => {
     if (typeof DeviceMotionEvent !== 'undefined') {
+      // Reset tracking variables
+      lastSampleTimeRef.current = Date.now()
+      movementSamplesRef.current = []
+      currentMovementRef.current = 0
+      
       const handleMotion = (event) => {
         const acceleration = event.accelerationIncludingGravity
         if (acceleration) {
@@ -149,29 +164,55 @@ const useSleepTracking = () => {
             (acceleration.z || 0) ** 2
           )
           
-          const timestamp = Date.now()
-          movementRef.current.push({
-            timestamp,
-            movement: totalMovement,
-            time: new Date(timestamp).toLocaleTimeString()
-          })
-          
-          // Keep only last 8 hours of data
-          if (movementRef.current.length > 2880) {
-            movementRef.current = movementRef.current.slice(-2880)
-          }
+          // Store current movement value (but don't add to array yet)
+          currentMovementRef.current = totalMovement
         }
+      }
+
+      // Sample movement data at regular intervals instead of every motion event
+      const sampleMovement = () => {
+        const now = Date.now()
+        const movement = currentMovementRef.current
+        
+        // Determine movement intensity
+        let intensity = 'calm'
+        if (movement > RESTLESS_THRESHOLD) {
+          intensity = 'restless'
+        } else if (movement > MOVEMENT_THRESHOLD) {
+          intensity = 'light'
+        }
+        
+        const sample = {
+          timestamp: now,
+          movement: Math.round(movement * 100) / 100, // Round to 2 decimal places
+          intensity,
+          time: new Date(now).toLocaleTimeString()
+        }
+        
+        movementSamplesRef.current.push(sample)
+        
+        // Keep only last 8 hours of samples (at 30-second intervals)
+        // 8 hours = 8 * 60 * 2 = 960 samples
+        if (movementSamplesRef.current.length > 960) {
+          movementSamplesRef.current = movementSamplesRef.current.slice(-960)
+        }
+        
+        console.log(`Movement sample: ${movement.toFixed(2)} (${intensity}) - Total samples: ${movementSamplesRef.current.length}`)
       }
 
       window.addEventListener('devicemotion', handleMotion)
       
-      // Update movement data every 10 seconds
+      // Sample movement data every 30 seconds instead of every motion event
+      const sampleInterval = setInterval(sampleMovement, SAMPLE_INTERVAL)
+      
+      // Update React state every minute (less frequent updates)
       trackingIntervalRef.current = setInterval(() => {
-        setMovementData([...movementRef.current])
-      }, 10000)
+        setMovementData([...movementSamplesRef.current])
+      }, 60000) // Update UI every minute
 
       return () => {
         window.removeEventListener('devicemotion', handleMotion)
+        clearInterval(sampleInterval)
         if (trackingIntervalRef.current) {
           clearInterval(trackingIntervalRef.current)
         }
@@ -237,7 +278,7 @@ const useSleepTracking = () => {
         endTime: endTime.toLocaleTimeString(),
         actualWakeTime: endTime.toLocaleTimeString(),
         duration: Math.round((endTime - startTime) / (1000 * 60 * 60) * 10) / 10,
-        movementData: [...movementRef.current],
+        movementData: [...movementSamplesRef.current], // Use sampled data
         isActive: false
       }
 
