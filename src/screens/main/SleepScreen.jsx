@@ -1,7 +1,5 @@
-// Add this to your SleepScreen.jsx or create a debug component
-
 import React, { useState } from 'react'
-import { Clock, TestTube } from 'lucide-react'
+import { Clock, TestTube, ChevronDown, ChevronUp } from 'lucide-react'
 import useSleepTracking from '../../hooks/useSleepTracking'
 import { formatTime12Hour } from '../../utils/timeUtils'
 import CircularClock from '../../components/ui/CircularClock'
@@ -20,6 +18,8 @@ const SleepScreen = () => {
   } = useSleepTracking()
 
   const [testMode, setTestMode] = useState(false)
+  const [showSleepTimePicker, setShowSleepTimePicker] = useState(false)
+  const [showWakeTimePicker, setShowWakeTimePicker] = useState(false)
 
   // Quick test function - simulates sleep session
   const quickTestSleep = () => {
@@ -30,14 +30,13 @@ const SleepScreen = () => {
       startTime: now.toLocaleTimeString(),
       sleepTime: "23:00",
       wakeTime: "07:00",
-      endTime: new Date(now.getTime() + 30000).toLocaleTimeString(), // 30 seconds later
+      endTime: new Date(now.getTime() + 30000).toLocaleTimeString(),
       actualWakeTime: new Date(now.getTime() + 30000).toLocaleTimeString(),
-      duration: Math.random() * 3 + 6, // Random between 6-9 hours
+      duration: Math.random() * 3 + 6,
       movementData: generateMockMovementData(),
       isActive: false
     }
 
-    // Save to localStorage directly
     const existingData = JSON.parse(localStorage.getItem('sleepTrackerData') || '[]')
     const updatedData = [...existingData, testSession]
     localStorage.setItem('sleepTrackerData', JSON.stringify(updatedData))
@@ -50,8 +49,8 @@ const SleepScreen = () => {
     const data = []
     for (let i = 0; i < 100; i++) {
       data.push({
-        timestamp: Date.now() - (i * 30000), // Every 30 seconds
-        movement: Math.random() * 10 + 2, // Random movement
+        timestamp: Date.now() - (i * 30000),
+        movement: Math.random() * 10 + 2,
         time: new Date(Date.now() - (i * 30000)).toLocaleTimeString()
       })
     }
@@ -73,14 +72,13 @@ const SleepScreen = () => {
       isActive: true
     }
 
-    // Set 30-second alarm instead of full duration
     setTimeout(() => {
       const endTime = new Date()
       const completedSession = {
         ...sleepSession,
         endTime: endTime.toLocaleTimeString(),
         actualWakeTime: endTime.toLocaleTimeString(),
-        duration: 0.01, // 30 seconds = 0.01 hours
+        duration: 0.01,
         movementData: generateMockMovementData(),
         isActive: false
       }
@@ -92,13 +90,12 @@ const SleepScreen = () => {
       setIsTracking(false)
       setAlarmSet(false)
       
-      // Notification
       if (navigator.vibrate) {
         navigator.vibrate([200, 100, 200])
       }
       
       alert('Quick test completed! Check Statistics tab.')
-    }, 30000) // 30 seconds
+    }, 30000)
   }
 
   // Add multiple test sessions
@@ -107,7 +104,7 @@ const SleepScreen = () => {
     const now = new Date()
 
     for (let i = 0; i < 7; i++) {
-      const sessionDate = new Date(now.getTime() - (i * 24 * 60 * 60 * 1000)) // i days ago
+      const sessionDate = new Date(now.getTime() - (i * 24 * 60 * 60 * 1000))
       sessions.push({
         id: Date.now() + i,
         date: sessionDate.toDateString(),
@@ -116,7 +113,7 @@ const SleepScreen = () => {
         wakeTime: "07:00",
         endTime: "07:00",
         actualWakeTime: "07:00",
-        duration: Math.random() * 2 + 7, // 7-9 hours
+        duration: Math.random() * 2 + 7,
         movementData: generateMockMovementData(),
         isActive: false
       })
@@ -136,6 +133,39 @@ const SleepScreen = () => {
       alert('All data cleared!')
     }
   }
+
+  // Handle time change and close picker
+  const handleSleepTimeChange = (newTime) => {
+    setSleepTime(newTime)
+    setShowSleepTimePicker(false)
+  }
+
+  const handleWakeTimeChange = (newTime) => {
+    setWakeTime(newTime)
+    setShowWakeTimePicker(false)
+  }
+
+  // Time picker component
+  const TimePicker = ({ value, onChange, onClose, label }) => (
+    <div className="bg-gray-700 rounded-xl p-4 border border-gray-600">
+      <div className="flex justify-between items-center mb-3">
+        <span className="font-medium">{label}</span>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-white"
+        >
+          <ChevronUp className="w-5 h-5" />
+        </button>
+      </div>
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full p-3 rounded-lg bg-gray-800 border border-gray-600 text-white text-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        autoFocus
+      />
+    </div>
+  )
 
   return (
     <div className="flex-1 bg-gray-900 text-white p-6 fade-in">
@@ -201,60 +231,90 @@ const SleepScreen = () => {
         
         {/* Time Settings */}
         <div className="space-y-4 mb-8">
-          <div className="flex items-center justify-between p-4 bg-gray-800 rounded-xl">
-            <div className="flex items-center">
-              <div className="w-6 h-6 mr-3 bg-white rounded flex items-center justify-center">
-                <div className="w-3 h-3 bg-gray-900 rounded"></div>
+          {/* Bedtime Setting */}
+          <div className="bg-gray-800 rounded-xl overflow-hidden">
+            <button
+              onClick={() => {
+                if (!isTracking) {
+                  setShowSleepTimePicker(!showSleepTimePicker)
+                  setShowWakeTimePicker(false)
+                }
+              }}
+              disabled={isTracking}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-750 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center">
+                <div className="w-6 h-6 mr-3 bg-white rounded flex items-center justify-center">
+                  <div className="w-3 h-3 bg-gray-900 rounded"></div>
+                </div>
+                <span className="text-lg">Bedtime</span>
               </div>
-              <span className="text-lg">Bedtime</span>
-            </div>
-            <div className="flex items-center">
-              <span className="text-lg mr-3">{formatTime12Hour(sleepTime)}</span>
-              <button 
-                onClick={() => document.getElementById('sleep-time-input').showPicker()}
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-                disabled={isTracking}
-              >
-                ✏️
-              </button>
-            </div>
+              <div className="flex items-center">
+                <span className="text-lg mr-3 font-medium text-blue-400">
+                  {formatTime12Hour(sleepTime)}
+                </span>
+                {!isTracking && (
+                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${
+                    showSleepTimePicker ? 'rotate-180' : ''
+                  }`} />
+                )}
+              </div>
+            </button>
+            
+            {showSleepTimePicker && (
+              <div className="border-t border-gray-700 p-4">
+                <TimePicker
+                  value={sleepTime}
+                  onChange={handleSleepTimeChange}
+                  onClose={() => setShowSleepTimePicker(false)}
+                  label="Set Bedtime"
+                />
+              </div>
+            )}
           </div>
           
-          <div className="flex items-center justify-between p-4 bg-gray-800 rounded-xl">
-            <div className="flex items-center">
-              <div className="w-6 h-6 mr-3 bg-white rounded flex items-center justify-center">
-                <Clock className="w-3 h-3 text-gray-900" />
+          {/* Wake Time Setting */}
+          <div className="bg-gray-800 rounded-xl overflow-hidden">
+            <button
+              onClick={() => {
+                if (!isTracking) {
+                  setShowWakeTimePicker(!showWakeTimePicker)
+                  setShowSleepTimePicker(false)
+                }
+              }}
+              disabled={isTracking}
+              className="w-full flex items-center justify-between p-4 hover:bg-gray-750 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <div className="flex items-center">
+                <div className="w-6 h-6 mr-3 bg-white rounded flex items-center justify-center">
+                  <Clock className="w-3 h-3 text-gray-900" />
+                </div>
+                <span className="text-lg">Alarm</span>
               </div>
-              <span className="text-lg">Alarm</span>
-            </div>
-            <div className="flex items-center">
-              <span className="text-lg mr-3">{formatTime12Hour(wakeTime)}</span>
-              <button 
-                onClick={() => document.getElementById('wake-time-input').showPicker()}
-                className="text-blue-400 hover:text-blue-300 transition-colors"
-                disabled={isTracking}
-              >
-                ✏️
-              </button>
-            </div>
+              <div className="flex items-center">
+                <span className="text-lg mr-3 font-medium text-green-400">
+                  {formatTime12Hour(wakeTime)}
+                </span>
+                {!isTracking && (
+                  <ChevronDown className={`w-5 h-5 text-gray-400 transition-transform ${
+                    showWakeTimePicker ? 'rotate-180' : ''
+                  }`} />
+                )}
+              </div>
+            </button>
+            
+            {showWakeTimePicker && (
+              <div className="border-t border-gray-700 p-4">
+                <TimePicker
+                  value={wakeTime}
+                  onChange={handleWakeTimeChange}
+                  onClose={() => setShowWakeTimePicker(false)}
+                  label="Set Alarm"
+                />
+              </div>
+            )}
           </div>
         </div>
-        
-        {/* Hidden time inputs */}
-        <input
-          id="sleep-time-input"
-          type="time"
-          value={sleepTime}
-          onChange={(e) => setSleepTime(e.target.value)}
-          className="input-time"
-        />
-        <input
-          id="wake-time-input"
-          type="time"
-          value={wakeTime}
-          onChange={(e) => setWakeTime(e.target.value)}
-          className="input-time"
-        />
         
         {/* Sleep Button */}
         {!isTracking ? (
