@@ -86,32 +86,7 @@ const ProfileScreen = () => {
               </div>
             </div>
 
-            {/* Dark Mode Toggle - Now Working! */}
-            <div className="bg-gray-800 rounded-2xl p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  <Moon className="w-5 h-5 text-purple-400 mr-3" />
-                  <div>
-                    <span className="font-medium">Dark Mode</span>
-                    <p className="text-xs text-gray-400">
-                      {settings.darkMode ? 'Enabled for better sleep' : 'Tap to enable'}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleToggleSetting('darkMode')}
-                  className={`w-12 h-6 rounded-full transition-colors ${
-                    settings.darkMode ? 'bg-purple-500' : 'bg-gray-600'
-                  }`}
-                >
-                  <div className={`w-5 h-5 bg-white rounded-full transition-transform ${
-                    settings.darkMode ? 'translate-x-6' : 'translate-x-0.5'
-                  } mt-0.5`} />
-                </button>
-              </div>
-            </div>
-
-            {/* Additional Setting - Sleep Reminders */}
+            {/* Sleep Reminders Toggle */}
             <div className="bg-gray-800 rounded-2xl p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
@@ -157,17 +132,6 @@ const ProfileScreen = () => {
                   <p className="text-xs text-gray-400">Local device storage only</p>
                 </div>
               </div>
-            </div>
-          </div>
-
-          {/* Debug Settings Info */}
-          <div className="bg-gray-700 rounded-xl p-3 mb-8 text-xs">
-            <h4 className="font-medium text-gray-300 mb-2">Current Settings:</h4>
-            <div className="space-y-1 text-gray-400">
-              <p>• Notifications: {settings.notifications ? 'On' : 'Off'}</p>
-              <p>• Vibration: {settings.vibration ? 'On' : 'Off'}</p>
-              <p>• Dark Mode: {settings.darkMode ? 'On' : 'Off'}</p>
-              <p>• Sleep Reminders: {settings.sleepReminders ? 'On' : 'Off'}</p>
             </div>
           </div>
 
