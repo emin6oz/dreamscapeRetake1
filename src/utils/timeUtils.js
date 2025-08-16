@@ -8,7 +8,7 @@ export const timeToAngle = (timeStr) => {
 // Format time to 12-hour format with AM/PM
 export const formatTime12Hour = (timeStr) => {
   if (timeStr === '00:00') return '12:00 AM'
-  
+     
   try {
     return new Date(`2024-01-01T${timeStr}`).toLocaleTimeString('en-US', {
       hour: 'numeric',
@@ -20,18 +20,46 @@ export const formatTime12Hour = (timeStr) => {
   }
 }
 
+// NEW: Format ISO timestamp to readable time
+export const formatTimestamp = (timestamp) => {
+  try {
+    // Check if it's an ISO string (contains 'T')
+    if (typeof timestamp === 'string' && timestamp.includes('T')) {
+      return new Date(timestamp).toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })
+    }
+    // If it's already a readable time, return as is
+    return timestamp
+  } catch (error) {
+    return timestamp
+  }
+}
+
+// NEW: Clean up sleep data with ISO timestamps
+export const cleanupSleepData = (sleepData) => {
+  return sleepData.map(session => ({
+    ...session,
+    startTime: formatTimestamp(session.startTime),
+    endTime: session.endTime ? formatTimestamp(session.endTime) : session.endTime,
+    actualWakeTime: session.actualWakeTime ? formatTimestamp(session.actualWakeTime) : session.actualWakeTime
+  }))
+}
+
 // Calculate sleep duration in hours
 export const calculateSleepDuration = (sleepTime, wakeTime) => {
   const [sleepHours, sleepMinutes] = sleepTime.split(':').map(Number)
   const [wakeHours, wakeMinutes] = wakeTime.split(':').map(Number)
-  
+     
   const sleepTotalMinutes = sleepHours * 60 + sleepMinutes
   let wakeTotalMinutes = wakeHours * 60 + wakeMinutes
-  
+     
   if (wakeTotalMinutes <= sleepTotalMinutes) {
     wakeTotalMinutes += 24 * 60
   }
-  
+     
   const durationMinutes = wakeTotalMinutes - sleepTotalMinutes
   return Math.round((durationMinutes / 60) * 10) / 10
 }
@@ -41,7 +69,7 @@ export const getTimeDifference = (date1, date2) => {
   const diffMs = Math.abs(date2 - date1)
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
   const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60))
-  
+     
   if (diffHours === 0) {
     return `${diffMinutes}m`
   }
@@ -52,15 +80,15 @@ export const getTimeDifference = (date1, date2) => {
 export const isInSleepWindow = (sleepTime, wakeTime) => {
   const now = new Date()
   const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-  
+     
   const [sleepHour, sleepMin] = sleepTime.split(':').map(Number)
   const [wakeHour, wakeMin] = wakeTime.split(':').map(Number)
   const [currentHour, currentMin] = currentTime.split(':').map(Number)
-  
+     
   const sleepMinutes = sleepHour * 60 + sleepMin
   const wakeMinutes = wakeHour * 60 + wakeMin
   const currentMinutes = currentHour * 60 + currentMin
-  
+     
   if (sleepMinutes > wakeMinutes) {
     // Sleep time crosses midnight
     return currentMinutes >= sleepMinutes || currentMinutes <= wakeMinutes

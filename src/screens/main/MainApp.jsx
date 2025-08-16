@@ -1,3 +1,4 @@
+// screens/MainApp.jsx
 import React, { useState } from 'react'
 import BottomTabNavigator from '../../components/navigation/BottomTabNavigator'
 import SleepScreen from './SleepScreen'
@@ -5,6 +6,7 @@ import StatisticsScreen from './StatisticsScreen'
 import ScanScreen from './ScanScreen'
 import ProfileScreen from './ProfileScreen'
 import IOSInstallPrompt from '../../components/ui/IOSInstallPrompt'
+
 import { TAB_ROUTES } from '../../utils/constants'
 
 const MainApp = () => {

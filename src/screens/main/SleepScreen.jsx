@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { Clock, TestTube, ChevronDown, ChevronUp } from 'lucide-react'
+import { Clock, ChevronDown, ChevronUp, Info } from 'lucide-react'
 import useSleepTracking from '../../hooks/useSleepTracking'
 import { formatTime12Hour } from '../../utils/timeUtils'
 import CircularClock from '../../components/ui/CircularClock'
 import Button from '../../components/common/Button'
+import SleepTrackingInstructions from '../../components/ui/SleepTrackingInstructions'
 
 const SleepScreen = () => {
   const {
@@ -17,122 +18,10 @@ const SleepScreen = () => {
     stopSleepTracking
   } = useSleepTracking()
 
-  const [testMode, setTestMode] = useState(false)
   const [showSleepTimePicker, setShowSleepTimePicker] = useState(false)
   const [showWakeTimePicker, setShowWakeTimePicker] = useState(false)
-
-  // Quick test function - simulates sleep session
-  const quickTestSleep = () => {
-    const now = new Date()
-    const testSession = {
-      id: Date.now(),
-      date: now.toDateString(),
-      startTime: now.toLocaleTimeString(),
-      sleepTime: "23:00",
-      wakeTime: "07:00",
-      endTime: new Date(now.getTime() + 30000).toLocaleTimeString(),
-      actualWakeTime: new Date(now.getTime() + 30000).toLocaleTimeString(),
-      duration: Math.random() * 3 + 6,
-      movementData: generateMockMovementData(),
-      isActive: false
-    }
-
-    const existingData = JSON.parse(localStorage.getItem('sleepTrackerData') || '[]')
-    const updatedData = [...existingData, testSession]
-    localStorage.setItem('sleepTrackerData', JSON.stringify(updatedData))
-    
-    alert('Test sleep session added! Check Statistics tab.')
-  }
-
-  // Generate mock movement data for testing
-  const generateMockMovementData = () => {
-    const data = []
-    for (let i = 0; i < 100; i++) {
-      data.push({
-        timestamp: Date.now() - (i * 30000),
-        movement: Math.random() * 10 + 2,
-        time: new Date(Date.now() - (i * 30000)).toLocaleTimeString()
-      })
-    }
-    return data
-  }
-
-  // 30-second test alarm
-  const startQuickTest = () => {
-    setIsTracking(true)
-    setAlarmSet(true)
-    
-    const startTime = new Date()
-    const sleepSession = {
-      id: Date.now(),
-      date: startTime.toDateString(),
-      startTime: startTime.toLocaleTimeString(),
-      sleepTime,
-      wakeTime,
-      isActive: true
-    }
-
-    setTimeout(() => {
-      const endTime = new Date()
-      const completedSession = {
-        ...sleepSession,
-        endTime: endTime.toLocaleTimeString(),
-        actualWakeTime: endTime.toLocaleTimeString(),
-        duration: 0.01,
-        movementData: generateMockMovementData(),
-        isActive: false
-      }
-
-      const existingData = JSON.parse(localStorage.getItem('sleepTrackerData') || '[]')
-      const updatedData = [...existingData, completedSession]
-      localStorage.setItem('sleepTrackerData', JSON.stringify(updatedData))
-      
-      setIsTracking(false)
-      setAlarmSet(false)
-      
-      if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200])
-      }
-      
-      alert('Quick test completed! Check Statistics tab.')
-    }, 30000)
-  }
-
-  // Add multiple test sessions
-  const addMultipleTestSessions = () => {
-    const sessions = []
-    const now = new Date()
-
-    for (let i = 0; i < 7; i++) {
-      const sessionDate = new Date(now.getTime() - (i * 24 * 60 * 60 * 1000))
-      sessions.push({
-        id: Date.now() + i,
-        date: sessionDate.toDateString(),
-        startTime: "23:30",
-        sleepTime: "23:30",
-        wakeTime: "07:00",
-        endTime: "07:00",
-        actualWakeTime: "07:00",
-        duration: Math.random() * 2 + 7,
-        movementData: generateMockMovementData(),
-        isActive: false
-      })
-    }
-
-    const existingData = JSON.parse(localStorage.getItem('sleepTrackerData') || '[]')
-    const updatedData = [...existingData, ...sessions]
-    localStorage.setItem('sleepTrackerData', JSON.stringify(updatedData))
-    
-    alert('7 test sessions added! Check Statistics tab.')
-  }
-
-  // Clear all data
-  const clearAllData = () => {
-    if (window.confirm('Clear all sleep data?')) {
-      localStorage.removeItem('sleepTrackerData')
-      alert('All data cleared!')
-    }
-  }
+  const [showInstructions, setShowInstructions] = useState(false)
+  const [isStarting, setIsStarting] = useState(false)
 
   // Handle time change and close picker
   const handleSleepTimeChange = (newTime) => {
@@ -143,6 +32,24 @@ const SleepScreen = () => {
   const handleWakeTimeChange = (newTime) => {
     setWakeTime(newTime)
     setShowWakeTimePicker(false)
+  }
+
+  // Handle start tracking
+  const handleStartTracking = async () => {
+    setIsStarting(true)
+    try {
+      await startSleepTracking()
+    } catch (error) {
+      console.error('Failed to start tracking:', error)
+      alert('Failed to start sleep tracking. Please try again.')
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  // Handle stop tracking - no confirmation dialog
+  const handleStopTracking = () => {
+    stopSleepTracking()
   }
 
   // Time picker component
@@ -173,53 +80,22 @@ const SleepScreen = () => {
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-medium">Sleep tracker</h1>
           <button
-            onClick={() => setTestMode(!testMode)}
-            className="p-2 bg-yellow-600 rounded-lg"
+            onClick={() => setShowInstructions(true)}
+            className="p-2 bg-blue-600 rounded-lg"
+            title="Instructions"
           >
-            <TestTube className="w-5 h-5" />
+            <Info className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Test Mode Panel */}
-        {testMode && (
-          <div className="bg-yellow-900/20 border border-yellow-600 rounded-xl p-4 mb-6">
-            <h3 className="text-yellow-400 font-semibold mb-3">🧪 Test Mode</h3>
-            <div className="space-y-3">
-              <Button
-                onClick={quickTestSleep}
-                variant="secondary"
-                size="sm"
-                className="w-full"
-              >
-                Add Single Test Session
-              </Button>
-              
-              <Button
-                onClick={startQuickTest}
-                variant="secondary"
-                size="sm"
-                className="w-full"
-              >
-                30-Second Live Test
-              </Button>
-              
-              <Button
-                onClick={addMultipleTestSessions}
-                variant="secondary"
-                size="sm"
-                className="w-full"
-              >
-                Add 7 Days of Data
-              </Button>
-              
-              <Button
-                onClick={clearAllData}
-                variant="danger"
-                size="sm"
-                className="w-full"
-              >
-                Clear All Data
-              </Button>
+        {/* Tracking Status Indicator */}
+        {isTracking && (
+          <div className="bg-green-600/20 border border-green-500 rounded-xl p-3 mb-4 text-center">
+            <div className="flex items-center justify-center">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-2" />
+              <span className="text-green-400 font-medium text-sm">
+                Sleep tracking is active
+              </span>
             </div>
           </div>
         )}
@@ -319,11 +195,12 @@ const SleepScreen = () => {
         {/* Sleep Button */}
         {!isTracking ? (
           <Button
-            onClick={startSleepTracking}
+            onClick={handleStartTracking}
+            disabled={isStarting}
             className="w-full mb-6"
             size="lg"
           >
-            Sleep Now
+            {isStarting ? 'Starting...' : 'Sleep Now'}
           </Button>
         ) : (
           <div className="space-y-4 mb-6">
@@ -338,17 +215,28 @@ const SleepScreen = () => {
                   ⏰ Alarm set for {formatTime12Hour(wakeTime)}
                 </p>
               )}
+              <p className="text-xs mt-2 text-green-300">
+                ✨ You can switch between tabs - tracking continues!
+              </p>
             </div>
             
             <Button
-              onClick={stopSleepTracking}
+              onClick={handleStopTracking}
               variant="danger"
               className="w-full"
               size="lg"
             >
-              Stop Tracking
+              Stop Tracking & Save Session
             </Button>
           </div>
+        )}
+
+        {/* Instructions Modal */}
+        {showInstructions && (
+          <SleepTrackingInstructions
+            onClose={() => setShowInstructions(false)}
+            onStartTracking={handleStartTracking}
+          />
         )}
       </div>
     </div>

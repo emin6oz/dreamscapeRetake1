@@ -1,9 +1,64 @@
-// Updated useSleepTracking.js - Fixed movement tracking
+// useSleepTracking.js with persistent tracking state
 
 import { useState, useEffect, useRef } from 'react'
-import { saveToStorage, getFromStorage } from '../utils/storage'
-import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../utils/constants'
+import { openDB } from 'idb'
+import { DEFAULT_SETTINGS } from '../utils/constants'
 import { notificationManager, vibrationManager } from '../utils/notifications'
+
+// IndexedDB config
+const DB_NAME = 'sleepTrackerDB'
+const DB_VERSION = 1
+const STORE_NAMES = {
+  SESSIONS: 'sessions',
+  MOVEMENT: 'movement',
+  SETTINGS: 'settings',
+  ACTIVE: 'activeSession'
+}
+
+async function initDB() {
+  return openDB(DB_NAME, DB_VERSION, {
+    upgrade(db) {
+      if (!db.objectStoreNames.contains(STORE_NAMES.SESSIONS)) {
+        db.createObjectStore(STORE_NAMES.SESSIONS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_NAMES.MOVEMENT)) {
+        db.createObjectStore(STORE_NAMES.MOVEMENT, { keyPath: 'timestamp' })
+      }
+      if (!db.objectStoreNames.contains(STORE_NAMES.SETTINGS)) {
+        db.createObjectStore(STORE_NAMES.SETTINGS)
+      }
+      if (!db.objectStoreNames.contains(STORE_NAMES.ACTIVE)) {
+        db.createObjectStore(STORE_NAMES.ACTIVE)
+      }
+    }
+  })
+}
+
+// IndexedDB helpers
+async function saveItem(store, value, key) {
+  const db = await initDB()
+  return db.put(store, value, key)
+}
+
+async function getItem(store, key) {
+  const db = await initDB()
+  return db.get(store, key)
+}
+
+async function getAll(store) {
+  const db = await initDB()
+  return db.getAll(store)
+}
+
+async function deleteItem(store, key) {
+  const db = await initDB()
+  return db.delete(store, key)
+}
+
+async function clearStore(store) {
+  const db = await initDB()
+  return db.clear(store)
+}
 
 const useSleepTracking = () => {
   const [sleepTime, setSleepTime] = useState(DEFAULT_SETTINGS.sleepTime)
@@ -13,86 +68,105 @@ const useSleepTracking = () => {
   const [movementData, setMovementData] = useState([])
   const [alarmSet, setAlarmSet] = useState(false)
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
-  
-  const movementRef = useRef([])
+
   const trackingIntervalRef = useRef(null)
   const alarmTimeoutRef = useRef(null)
   const bedtimeReminderRef = useRef(null)
-  
-  // NEW: Movement sampling variables
-  const lastSampleTimeRef = useRef(0)
+  const motionCleanupRef = useRef(null)
+  const sessionStartTimeRef = useRef(null)
+
   const currentMovementRef = useRef(0)
   const movementSamplesRef = useRef([])
 
-  // SAMPLING CONFIGURATION
-  const SAMPLE_INTERVAL = 30000 // Sample every 30 seconds instead of 60 times per second
-  const MOVEMENT_THRESHOLD = 0.5 // Threshold for detecting significant movement
-  const RESTLESS_THRESHOLD = 2.0 // Higher threshold for "restless" periods
+  const SAMPLE_INTERVAL = 30000
+  const MOVEMENT_THRESHOLD = 0.5
+  const RESTLESS_THRESHOLD = 2.0
 
-  // Load data from storage on mount
+  // Load saved sessions and settings
   useEffect(() => {
-    const savedSleepData = getFromStorage(STORAGE_KEYS.SLEEP_DATA)
-    const savedSettings = getFromStorage(STORAGE_KEYS.SETTINGS)
-    
-    if (savedSleepData) {
-      setSleepData(savedSleepData)
-    }
-    
-    if (savedSettings) {
-      setSettings(savedSettings)
-      setSleepTime(savedSettings.sleepTime || DEFAULT_SETTINGS.sleepTime)
-      setWakeTime(savedSettings.wakeTime || DEFAULT_SETTINGS.wakeTime)
-    }
+    (async () => {
+      const savedSleepData = await getAll(STORE_NAMES.SESSIONS)
+      const savedSettings = await getItem(STORE_NAMES.SETTINGS, 'settings')
 
-    // Request notification permission
-    if (savedSettings?.notifications !== false) {
-      notificationManager.requestPermission()
-    }
+      if (savedSleepData?.length) setSleepData(savedSleepData)
+      if (savedSettings) {
+        setSettings(savedSettings)
+        setSleepTime(savedSettings.sleepTime || DEFAULT_SETTINGS.sleepTime)
+        setWakeTime(savedSettings.wakeTime || DEFAULT_SETTINGS.wakeTime)
+      }
+
+      if (savedSettings?.notifications !== false) {
+        notificationManager.requestPermission()
+      }
+    })()
   }, [])
 
-  // Set up bedtime reminders
+  // Always attempt to recover an active session whenever the hook mounts
   useEffect(() => {
-    if (settings.sleepReminders && settings.notifications) {
-      setupBedtimeReminder()
-    } else {
-      clearBedtimeReminder()
-    }
+    recoverActiveSession()
+  }, [])
 
+  const recoverActiveSession = async () => {
+    const activeSession = await getItem(STORE_NAMES.ACTIVE, 'active')
+    if (activeSession?.isActive) {
+      const now = Date.now()
+      const sessionStart = new Date(activeSession.sessionStartTime).getTime()
+      const timeSinceStart = now - sessionStart
+
+      if (timeSinceStart < 12 * 60 * 60 * 1000) {
+        setIsTracking(true)
+        setAlarmSet(true)
+        sessionStartTimeRef.current = new Date(sessionStart)
+        startMovementTracking()
+
+        const [wakeHours, wakeMinutes] = (activeSession.wakeTime || wakeTime).split(':').map(Number)
+        const wakeUpTime = new Date()
+        wakeUpTime.setHours(wakeHours, wakeMinutes, 0, 0)
+        if (wakeUpTime <= new Date()) wakeUpTime.setDate(wakeUpTime.getDate() + 1)
+
+        const timeUntilWake = wakeUpTime.getTime() - now
+        if (timeUntilWake > 0) {
+          alarmTimeoutRef.current = setTimeout(() => completeSession(activeSession), timeUntilWake)
+        }
+
+        const savedMovement = await getAll(STORE_NAMES.MOVEMENT)
+        if (savedMovement.length) {
+          movementSamplesRef.current = savedMovement
+          setMovementData(savedMovement)
+        }
+
+        return true
+      } else {
+        await clearStore(STORE_NAMES.ACTIVE)
+      }
+    }
+    return false
+  }
+
+  // Bedtime reminder
+  useEffect(() => {
+    if (settings.sleepReminders && settings.notifications) setupBedtimeReminder()
+    else clearBedtimeReminder()
     return () => clearBedtimeReminder()
   }, [settings.sleepReminders, settings.notifications, sleepTime])
 
-  // Setup bedtime reminder
   const setupBedtimeReminder = () => {
     clearBedtimeReminder()
-
     const [sleepHours, sleepMinutes] = sleepTime.split(':').map(Number)
     const now = new Date()
     const reminderTime = new Date()
-    
-    // Set reminder 30 minutes before bedtime
-    reminderTime.setHours(sleepHours, sleepMinutes - 30, 0, 0)
-    
-    // If reminder time has passed today, set for tomorrow
-    if (reminderTime <= now) {
-      reminderTime.setDate(reminderTime.getDate() + 1)
-    }
+    reminderTime.setHours(sleepHours, sleepMinutes, 0, 0)
+    reminderTime.setTime(reminderTime.getTime() - 30 * 60000)
+    if (reminderTime <= now) reminderTime.setDate(reminderTime.getDate() + 1)
 
     const timeUntilReminder = reminderTime.getTime() - now.getTime()
-
     bedtimeReminderRef.current = setTimeout(() => {
-      if (settings.notifications) {
-        notificationManager.showBedtimeReminder(formatTime12Hour(sleepTime))
-      }
-      if (settings.vibration) {
-        vibrationManager.notificationVibration()
-      }
-      
-      // Set up next day's reminder
+      if (settings.notifications) notificationManager.showBedtimeReminder(formatTime12Hour(sleepTime))
+      if (settings.vibration) vibrationManager.notificationVibration()
       setupBedtimeReminder()
     }, timeUntilReminder)
   }
 
-  // Clear bedtime reminder
   const clearBedtimeReminder = () => {
     if (bedtimeReminderRef.current) {
       clearTimeout(bedtimeReminderRef.current)
@@ -100,272 +174,175 @@ const useSleepTracking = () => {
     }
   }
 
-  // Format time to 12-hour format
   const formatTime12Hour = (timeStr) => {
-    if (timeStr === '00:00') return '12:00 AM'
-    
     try {
-      return new Date(`2024-01-01T${timeStr}`).toLocaleTimeString('en-US', {
+      return new Date(`2024-01-01T${timeStr}:00`).toLocaleTimeString('en-US', {
         hour: 'numeric',
         minute: '2-digit',
         hour12: true
       })
-    } catch (error) {
+    } catch {
       return timeStr
     }
   }
 
-  // Save settings to storage
-  const saveSettings = (newSettings = null) => {
+  const saveSettings = async (newSettings = null) => {
     const settingsToSave = newSettings || { ...settings, sleepTime, wakeTime }
     setSettings(settingsToSave)
-    saveToStorage(STORAGE_KEYS.SETTINGS, settingsToSave)
+    await saveItem(STORE_NAMES.SETTINGS, settingsToSave, 'settings')
   }
 
-  // Update individual setting
   const updateSetting = async (key, value) => {
     const newSettings = { ...settings, [key]: value }
-    
-    // Handle notification permission
     if (key === 'notifications' && value === true) {
       const granted = await notificationManager.requestPermission()
-      if (!granted) {
-        alert('Notification permission is required for alerts. Please enable it in your browser settings.')
-        return
-      }
+      if (!granted) return alert('Enable notifications in browser settings.')
     }
-
-    // Test vibration when enabled
     if (key === 'vibration' && value === true) {
-      if (vibrationManager.isVibrationSupported()) {
-        vibrationManager.notificationVibration()
-      } else {
-        alert('Vibration is not supported on this device.')
-      }
+      if (vibrationManager.isVibrationSupported()) vibrationManager.notificationVibration()
+      else alert('Vibration not supported.')
     }
-
-    saveSettings(newSettings)
+    await saveSettings(newSettings)
   }
 
-  // FIXED: Movement tracking with proper sampling
   const startMovementTracking = () => {
+    if (motionCleanupRef.current) motionCleanupRef.current()
+
     if (typeof DeviceMotionEvent !== 'undefined') {
-      // Reset tracking variables
-      lastSampleTimeRef.current = Date.now()
-      movementSamplesRef.current = []
       currentMovementRef.current = 0
-      
+      movementSamplesRef.current = []
+
       const handleMotion = (event) => {
-        const acceleration = event.accelerationIncludingGravity
-        if (acceleration) {
-          const totalMovement = Math.sqrt(
-            (acceleration.x || 0) ** 2 + 
-            (acceleration.y || 0) ** 2 + 
-            (acceleration.z || 0) ** 2
-          )
-          
-          // Store current movement value (but don't add to array yet)
-          currentMovementRef.current = totalMovement
-        }
+        const acc = event.accelerationIncludingGravity
+        if (acc) currentMovementRef.current = Math.sqrt((acc.x || 0) ** 2 + (acc.y || 0) ** 2 + (acc.z || 0) ** 2)
       }
 
-      // Sample movement data at regular intervals instead of every motion event
-      const sampleMovement = () => {
+      const sampleMovement = async () => {
         const now = Date.now()
         const movement = currentMovementRef.current
-        
-        // Determine movement intensity
         let intensity = 'calm'
-        if (movement > RESTLESS_THRESHOLD) {
-          intensity = 'restless'
-        } else if (movement > MOVEMENT_THRESHOLD) {
-          intensity = 'light'
-        }
-        
-        const sample = {
-          timestamp: now,
-          movement: Math.round(movement * 100) / 100, // Round to 2 decimal places
-          intensity,
-          time: new Date(now).toLocaleTimeString()
-        }
-        
+        if (movement > RESTLESS_THRESHOLD) intensity = 'restless'
+        else if (movement > MOVEMENT_THRESHOLD) intensity = 'light'
+
+        const sample = { timestamp: now, movement: Math.round(movement * 100) / 100, intensity, time: new Date(now).toLocaleTimeString() }
         movementSamplesRef.current.push(sample)
-        
-        // Keep only last 8 hours of samples (at 30-second intervals)
-        // 8 hours = 8 * 60 * 2 = 960 samples
-        if (movementSamplesRef.current.length > 960) {
-          movementSamplesRef.current = movementSamplesRef.current.slice(-960)
-        }
-        
-        console.log(`Movement sample: ${movement.toFixed(2)} (${intensity}) - Total samples: ${movementSamplesRef.current.length}`)
+        if (movementSamplesRef.current.length > 960) movementSamplesRef.current = movementSamplesRef.current.slice(-960)
+        await saveItem(STORE_NAMES.MOVEMENT, sample, sample.timestamp)
       }
 
       window.addEventListener('devicemotion', handleMotion)
-      
-      // Sample movement data every 30 seconds instead of every motion event
       const sampleInterval = setInterval(sampleMovement, SAMPLE_INTERVAL)
-      
-      // Update React state every minute (less frequent updates)
-      trackingIntervalRef.current = setInterval(() => {
-        setMovementData([...movementSamplesRef.current])
-      }, 60000) // Update UI every minute
+      trackingIntervalRef.current = setInterval(() => setMovementData(() => [...movementSamplesRef.current]), 60000)
 
-      return () => {
+      motionCleanupRef.current = () => {
         window.removeEventListener('devicemotion', handleMotion)
         clearInterval(sampleInterval)
-        if (trackingIntervalRef.current) {
-          clearInterval(trackingIntervalRef.current)
-        }
+        if (trackingIntervalRef.current) clearInterval(trackingIntervalRef.current)
       }
     }
   }
 
-  // Start sleep tracking
-  const startSleepTracking = async () => {
-    setIsTracking(true)
-    setAlarmSet(true)
-    saveSettings()
-    
-    const startTime = new Date()
-    const sleepSession = {
-      id: Date.now(),
-      date: startTime.toDateString(),
-      startTime: startTime.toLocaleTimeString(),
-      sleepTime,
-      wakeTime,
-      isActive: true
-    }
+  const completeSession = async (sessionData) => {
+    const endTime = new Date()
+    const startTime = sessionStartTimeRef.current || new Date()
+    const duration = Math.round((endTime - startTime) / (1000 * 60 * 60) * 10) / 10
 
-    // Show tracking started notification
-    if (settings.notifications) {
-      notificationManager.showSleepTrackingStarted()
-    }
+    const completedSession = { ...sessionData, endTime: endTime.toISOString(), actualWakeTime: endTime.toISOString(), duration, movementData: [...movementSamplesRef.current], isActive: false }
+    await saveItem(STORE_NAMES.SESSIONS, completedSession)
+    setSleepData(prev => [...prev, completedSession])
 
-    // Gentle vibration when starting
-    if (settings.vibration) {
-      vibrationManager.notificationVibration()
-    }
-
-    // Request motion permission if needed
-    if (typeof DeviceMotionEvent.requestPermission === 'function') {
-      try {
-        const response = await DeviceMotionEvent.requestPermission()
-        if (response === 'granted') {
-          startMovementTracking()
-        }
-      } catch (error) {
-        console.error('Motion permission error:', error)
-      }
-    } else {
-      startMovementTracking()
-    }
-
-    // Set wake-up alarm
-    const [wakeHours, wakeMinutes] = wakeTime.split(':').map(Number)
-    const wakeUpTime = new Date()
-    wakeUpTime.setHours(wakeHours, wakeMinutes, 0, 0)
-    
-    if (wakeUpTime <= new Date()) {
-      wakeUpTime.setDate(wakeUpTime.getDate() + 1)
-    }
-
-    const timeUntilWake = wakeUpTime.getTime() - Date.now()
-    
-    alarmTimeoutRef.current = setTimeout(() => {
-      const endTime = new Date()
-      const completedSession = {
-        ...sleepSession,
-        endTime: endTime.toLocaleTimeString(),
-        actualWakeTime: endTime.toLocaleTimeString(),
-        duration: Math.round((endTime - startTime) / (1000 * 60 * 60) * 10) / 10,
-        movementData: [...movementSamplesRef.current], // Use sampled data
-        isActive: false
-      }
-
-      const updatedSleepData = [...sleepData, completedSession]
-      setSleepData(updatedSleepData)
-      saveToStorage(STORAGE_KEYS.SLEEP_DATA, updatedSleepData)
-      
-      setIsTracking(false)
-      setAlarmSet(false)
-      
-      // Wake user with vibration and notification
-      if (settings.vibration) {
-        vibrationManager.wakeUpVibration()
-      }
-      
-      if (settings.notifications) {
-        notificationManager.showWakeUpNotification()
-      }
-
-      // Fallback audio alert (optional)
-      try {
-        const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAAB...')
-        audio.play()
-      } catch (error) {
-        console.log('Audio alert not available')
-      }
-    }, timeUntilWake)
-  }
-
-  // Stop sleep tracking
-  const stopSleepTracking = () => {
     setIsTracking(false)
     setAlarmSet(false)
-    
-    if (trackingIntervalRef.current) {
-      clearInterval(trackingIntervalRef.current)
-    }
+    await clearStore(STORE_NAMES.ACTIVE)
+    await clearStore(STORE_NAMES.MOVEMENT)
 
-    if (alarmTimeoutRef.current) {
-      clearTimeout(alarmTimeoutRef.current)
-    }
+    if (motionCleanupRef.current) motionCleanupRef.current()
+    if (alarmTimeoutRef.current) clearTimeout(alarmTimeoutRef.current)
 
-    // Stop any ongoing vibrations
-    vibrationManager.stopVibration()
+    if (settings.vibration) vibrationManager.wakeUpVibration()
+    if (settings.notifications) notificationManager.showWakeUpNotification()
   }
 
-  // Calculate sleep statistics
+  const startSleepTracking = async () => {
+    try {
+      setIsTracking(true)
+      setAlarmSet(true)
+      await saveSettings()
+
+      const startTime = new Date()
+      sessionStartTimeRef.current = startTime
+      const sleepSession = { id: Date.now(), date: startTime.toDateString(), startTime: startTime.toISOString(), sessionStartTime: startTime.toISOString(), sleepTime, wakeTime, isActive: true }
+
+      await saveItem(STORE_NAMES.ACTIVE, sleepSession, 'active')
+      if (settings.notifications) notificationManager.showSleepTrackingStarted()
+      if (settings.vibration) vibrationManager.notificationVibration()
+
+      if (typeof DeviceMotionEvent?.requestPermission === 'function') {
+        try {
+          const response = await DeviceMotionEvent.requestPermission()
+          if (response === 'granted') startMovementTracking()
+        } catch (err) { console.error('Motion permission error:', err) }
+      } else startMovementTracking()
+
+      const [wakeHours, wakeMinutes] = wakeTime.split(':').map(Number)
+      const wakeUpTime = new Date()
+      wakeUpTime.setHours(wakeHours, wakeMinutes, 0, 0)
+      if (wakeUpTime <= new Date()) wakeUpTime.setDate(wakeUpTime.getDate() + 1)
+
+      const timeUntilWake = wakeUpTime.getTime() - Date.now()
+      if (timeUntilWake > 0) alarmTimeoutRef.current = setTimeout(() => completeSession(sleepSession), timeUntilWake)
+    } catch (error) {
+      setIsTracking(false)
+      setAlarmSet(false)
+      await clearStore(STORE_NAMES.ACTIVE)
+      throw error
+    }
+  }
+
+  const stopSleepTracking = async () => {
+    const activeSession = await getItem(STORE_NAMES.ACTIVE, 'active')
+    if (activeSession) await completeSession(activeSession)
+    else {
+      setIsTracking(false)
+      setAlarmSet(false)
+      if (motionCleanupRef.current) motionCleanupRef.current()
+      if (alarmTimeoutRef.current) clearTimeout(alarmTimeoutRef.current)
+    }
+  }
+
   const calculateStats = () => {
-    if (sleepData.length === 0) return null
-
-    const completedSessions = sleepData.filter(session => !session.isActive)
-    const totalSleep = completedSessions.reduce((sum, session) => sum + (session.duration || 0), 0)
-    const averageSleep = totalSleep / completedSessions.length || 0
-    const lastWeekData = completedSessions.slice(-7)
-    const weeklyAverage = lastWeekData.reduce((sum, session) => sum + (session.duration || 0), 0) / lastWeekData.length || 0
-
-    const durations = completedSessions.map(s => s.duration || 0).filter(d => d > 0)
+    if (!sleepData.length) return null
+    const completed = sleepData.filter(s => !s.isActive)
+    const total = completed.reduce((sum, s) => sum + (s.duration || 0), 0)
+    const avg = total / completed.length || 0
+    const lastWeek = completed.slice(-7)
+    const weeklyAvg = lastWeek.reduce((sum, s) => sum + (s.duration || 0), 0) / lastWeek.length || 0
+    const durations = completed.map(s => s.duration || 0).filter(d => d > 0)
 
     return {
-      totalSessions: completedSessions.length,
-      averageSleep: Math.round(averageSleep * 100) / 100,
-      weeklyAverage: Math.round(weeklyAverage * 100) / 100,
-      lastSleep: Math.round((completedSessions[completedSessions.length - 1]?.duration || 0) * 100) / 100,
-      totalHours: Math.round(totalSleep * 100) / 100,
-      longestSleep: durations.length > 0 ? Math.round(Math.max(...durations) * 100) / 100 : 0,
-      shortestSleep: durations.length > 0 ? Math.round(Math.min(...durations) * 100) / 100 : 0
+      totalSessions: completed.length,
+      averageSleep: Math.round(avg * 100) / 100,
+      weeklyAverage: Math.round(weeklyAvg * 100) / 100,
+      lastSleep: Math.round((completed.at(-1)?.duration || 0) * 100) / 100,
+      totalHours: Math.round(total * 100) / 100,
+      longestSleep: durations.length ? Math.round(Math.max(...durations) * 100) / 100 : 0,
+      shortestSleep: durations.length ? Math.round(Math.min(...durations) * 100) / 100 : 0
     }
   }
 
   return {
     sleepTime,
-    setSleepTime,
     wakeTime,
-    setWakeTime,
     isTracking,
+    alarmSet,
     sleepData,
     movementData,
-    alarmSet,
     settings,
     startSleepTracking,
     stopSleepTracking,
-    calculateStats,
     updateSetting,
     saveSettings,
-    // Expose notification and vibration managers for manual testing
-    testNotification: () => notificationManager.showNotification('Test Notification', { body: 'This is a test!' }),
-    testVibration: () => vibrationManager.notificationVibration()
+    calculateStats
   }
 }
 
