@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { openDB } from 'idb';
+import { formatTime12Hour } from '../utils/timeUtils';
 
 // Default settings - fallback if constants file doesn't exist
 const DEFAULT_SETTINGS = {
@@ -10,24 +11,6 @@ const DEFAULT_SETTINGS = {
   notifications: true,
   vibration: true,
   sleepReminders: true,
-};
-
-// Utility function - fallback if timeUtils doesn't exist
-const formatTime12Hour = (timeStr) => {
-  try {
-    if (!timeStr) return '12:00 AM';
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-  } catch (error) {
-    console.error('Error formatting time:', error);
-    return timeStr || '12:00 AM';
-  }
 };
 
 // Notification manager - fallback if notifications util doesn't exist
@@ -349,10 +332,8 @@ const useSleepTracking = () => {
     try {
       clearBedtimeReminder();
       
-      const [sleepHours, sleepMinutes] = sleepTime.split(':').map(Number);
       const now = new Date();
-      const reminderTime = new Date();
-      reminderTime.setHours(sleepHours, sleepMinutes, 0, 0);
+      const reminderTime = createLocalDateTime(sleepTime, now);
       reminderTime.setTime(reminderTime.getTime() - 30 * 60000); // 30 minutes before
       
       if (reminderTime <= now) {
@@ -360,7 +341,7 @@ const useSleepTracking = () => {
       }
 
       const timeUntilReminder = reminderTime.getTime() - now.getTime();
-      console.log(`Bedtime reminder set for ${timeUntilReminder}ms from now`);
+      console.log(`Bedtime reminder set for ${Math.round(timeUntilReminder / 1000 / 60)} minutes from now`);
       
       bedtimeReminderRef.current = setTimeout(() => {
         console.log('Bedtime reminder triggered');
@@ -532,6 +513,20 @@ const useSleepTracking = () => {
     }
   };
 
+  // Helper function to create local date from time string
+  const createLocalDateTime = (timeString, targetDate = new Date()) => {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    const localDate = new Date(targetDate);
+    localDate.setHours(hours, minutes, 0, 0);
+    return localDate;
+  };
+
+  // Helper function to get current local time as HH:MM string
+  const getCurrentTimeString = () => {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  };
+
   // --- Sleep tracking control ---
   const startSleepTracking = async () => {
     try {
@@ -552,7 +547,7 @@ const useSleepTracking = () => {
       await saveSettings();
       console.log('Settings saved');
 
-      // Create session data
+      // Create session data with local time
       const startTime = new Date();
       sessionStartTimeRef.current = startTime;
 
@@ -579,24 +574,28 @@ const useSleepTracking = () => {
         // Don't fail the whole process if motion tracking fails
       }
 
-      // Schedule wake-up alarm
-      const [wakeHours, wakeMinutes] = wakeTime.split(':').map(Number);
-      const wakeUpTime = new Date();
-      wakeUpTime.setHours(wakeHours, wakeMinutes, 0, 0);
+      // Schedule wake-up alarm using local time
+      const now = new Date();
+      const wakeUpTime = createLocalDateTime(wakeTime, now);
       
-      // If wake time is in the past, set it for tomorrow
-      if (wakeUpTime <= new Date()) {
+      // If wake time is earlier than or equal to current time, set it for tomorrow
+      if (wakeUpTime <= now) {
         wakeUpTime.setDate(wakeUpTime.getDate() + 1);
       }
 
-      const timeUntilWake = wakeUpTime.getTime() - Date.now();
-      console.log(`Alarm set for ${timeUntilWake}ms from now (${wakeUpTime.toLocaleString()})`);
+      const timeUntilWake = wakeUpTime.getTime() - now.getTime();
+      console.log(`Current time: ${getCurrentTimeString()}`);
+      console.log(`Wake time set for: ${wakeTime} (${wakeUpTime.toLocaleString()})`);
+      console.log(`Time until wake: ${Math.round(timeUntilWake / 1000 / 60)} minutes`);
       
-      if (timeUntilWake > 0) {
+      if (timeUntilWake > 0 && timeUntilWake < 24 * 60 * 60 * 1000) { // Max 24 hours
         alarmTimeoutRef.current = setTimeout(() => {
-          console.log('Alarm triggered automatically');
-          completeSession(sleepSession);
+          console.log('🚨 Alarm triggered automatically at:', new Date().toLocaleString());
+          triggerAlarm(sleepSession);
         }, timeUntilWake);
+        console.log('✅ Alarm scheduled successfully');
+      } else {
+        console.warn('⚠️ Invalid alarm time, not scheduling');
       }
 
       // Send notifications (non-blocking)
@@ -629,6 +628,68 @@ const useSleepTracking = () => {
       
       // Re-throw with more context
       throw new Error(`Sleep tracking failed: ${err.message}`);
+    }
+  };
+
+  // New function to handle alarm trigger with enhanced notifications
+  const triggerAlarm = async (sessionData) => {
+    try {
+      console.log('🚨 ALARM TRIGGERED! 🚨');
+      console.log('Triggering wake-up alarm at:', new Date().toLocaleString());
+      
+      // Enhanced wake-up vibration pattern
+      if (settings.vibration && vibrationManager.isVibrationSupported()) {
+        // Multiple vibration bursts for wake-up
+        vibrationManager.wakeUpVibration();
+        
+        // Additional vibrations every 2 seconds for 10 seconds
+        let vibrationCount = 0;
+        const vibrationInterval = setInterval(() => {
+          if (vibrationCount < 5) {
+            navigator.vibrate([500, 100, 500]);
+            vibrationCount++;
+          } else {
+            clearInterval(vibrationInterval);
+          }
+        }, 2000);
+      }
+
+      // Enhanced wake-up notification
+      if (settings.notifications && Notification.permission === 'granted') {
+        // Show persistent notification
+        const notification = new Notification('⏰ WAKE UP! ⏰', {
+          body: `It's ${formatTime12Hour(wakeTime)}! Time to wake up! Tap to stop alarm.`,
+          icon: '/icon-192x192.png',
+          tag: 'wake-up-alarm',
+          requireInteraction: true, // Keep notification visible
+          vibrate: [1000, 500, 1000, 500, 1000],
+          actions: [
+            { action: 'stop', title: '✋ Stop Alarm' },
+            { action: 'snooze', title: '😴 Snooze 5min' }
+          ]
+        });
+
+        // Handle notification actions
+        notification.onclick = () => {
+          console.log('Wake-up notification clicked');
+          notification.close();
+          completeSession(sessionData);
+        };
+      }
+
+      // Auto-complete session after 1 minute if not manually stopped
+      setTimeout(() => {
+        if (isTracking) {
+          console.log('Auto-completing session after 1 minute');
+          completeSession(sessionData);
+        }
+      }, 60000);
+
+      console.log('Wake-up alarm triggered successfully');
+    } catch (error) {
+      console.error('Error triggering alarm:', error);
+      // Fallback to just completing the session
+      completeSession(sessionData);
     }
   };
 
@@ -666,10 +727,14 @@ const useSleepTracking = () => {
       const startTime = sessionStartTimeRef.current || new Date(sessionData.sessionStartTime);
       const duration = Math.round((endTime - startTime) / (1000 * 60 * 60) * 10) / 10;
 
+      // Store actual wake time in local timezone
+      const localWakeTime = `${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`;
+
       const completedSession = {
         ...sessionData,
         endTime: endTime.toISOString(),
-        actualWakeTime: endTime.toISOString(),
+        actualWakeTime: localWakeTime, // Store as HH:MM format
+        actualWakeTimestamp: endTime.toISOString(), // Keep ISO for reference
         duration,
         movementData: [...movementSamplesRef.current],
         isActive: false,
@@ -679,7 +744,7 @@ const useSleepTracking = () => {
       await saveItem(STORE_NAMES.SESSIONS, completedSession);
       setSleepData(prev => [...prev, completedSession]);
       
-      console.log(`Session completed: ${duration} hours`);
+      console.log(`Session completed: ${duration} hours, woke up at ${localWakeTime}`);
 
       // Reset state
       setIsTracking(false);
@@ -701,11 +766,8 @@ const useSleepTracking = () => {
         alarmTimeoutRef.current = null;
       }
 
-      // Send wake-up notifications
+      // Send completion notification
       try {
-        if (settings.vibration) {
-          vibrationManager.wakeUpVibration();
-        }
         if (settings.notifications) {
           notificationManager.showWakeUpNotification();
         }
