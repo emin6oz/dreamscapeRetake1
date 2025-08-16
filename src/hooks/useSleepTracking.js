@@ -1,10 +1,17 @@
-// useSleepTracking.js - Complete updated version with fixes and debugging
+// useSleepTracking.js - Fixed version using your existing storage utilities
 
 import { useState, useEffect, useRef } from 'react';
-import { openDB } from 'idb';
 import { formatTime12Hour } from '../utils/timeUtils';
+import { notificationManager, vibrationManager } from '../utils/notifications';
+import { 
+  STORE_NAMES, 
+  saveToStorage, 
+  getFromStorage, 
+  getAllFromStorage, 
+  clearStorage 
+} from '../utils/storage';
 
-// Default settings - fallback if constants file doesn't exist
+// Default settings
 const DEFAULT_SETTINGS = {
   sleepTime: '23:00',
   wakeTime: '07:00',
@@ -13,166 +20,6 @@ const DEFAULT_SETTINGS = {
   sleepReminders: true,
 };
 
-// Notification manager - fallback if notifications util doesn't exist
-const notificationManager = {
-  async requestPermission() {
-    try {
-      if ('Notification' in window) {
-        const permission = await Notification.requestPermission();
-        return permission === 'granted';
-      }
-      return false;
-    } catch (error) {
-      console.error('Notification permission error:', error);
-      return false;
-    }
-  },
-
-  showBedtimeReminder(time) {
-    try {
-      if (Notification.permission === 'granted') {
-        new Notification('Bedtime Reminder', {
-          body: `Time to start winding down for bed at ${time}`,
-          icon: '/icon-192x192.png',
-          tag: 'bedtime-reminder'
-        });
-      }
-    } catch (error) {
-      console.error('Bedtime notification error:', error);
-    }
-  },
-
-  showSleepTrackingStarted() {
-    try {
-      if (Notification.permission === 'granted') {
-        new Notification('Sleep Tracking Started', {
-          body: 'Sweet dreams! We\'ll track your sleep and wake you up.',
-          icon: '/icon-192x192.png',
-          tag: 'sleep-started'
-        });
-      }
-    } catch (error) {
-      console.error('Sleep start notification error:', error);
-    }
-  },
-
-  showWakeUpNotification() {
-    try {
-      if (Notification.permission === 'granted') {
-        new Notification('Good Morning!', {
-          body: 'Hope you had a restful sleep. Your session has been saved.',
-          icon: '/icon-192x192.png',
-          tag: 'wake-up'
-        });
-      }
-    } catch (error) {
-      console.error('Wake up notification error:', error);
-    }
-  }
-};
-
-// Vibration manager - fallback if vibration util doesn't exist
-const vibrationManager = {
-  isVibrationSupported() {
-    return 'vibrate' in navigator;
-  },
-
-  notificationVibration() {
-    try {
-      if (this.isVibrationSupported()) {
-        navigator.vibrate([200, 100, 200]);
-      }
-    } catch (error) {
-      console.error('Notification vibration error:', error);
-    }
-  },
-
-  wakeUpVibration() {
-    try {
-      if (this.isVibrationSupported()) {
-        navigator.vibrate([1000, 500, 1000, 500, 1000]);
-      }
-    } catch (error) {
-      console.error('Wake up vibration error:', error);
-    }
-  }
-};
-
-// IndexedDB config
-const DB_NAME = 'sleepTrackerDB';
-const DB_VERSION = 1;
-const STORE_NAMES = {
-  SESSIONS: 'sessions',
-  MOVEMENT: 'movement',
-  SETTINGS: 'settings',
-  ACTIVE: 'activeSession',
-};
-
-// --- IndexedDB helpers ---
-async function initDB() {
-  try {
-    return await openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains(STORE_NAMES.SESSIONS)) {
-          db.createObjectStore(STORE_NAMES.SESSIONS, { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains(STORE_NAMES.MOVEMENT)) {
-          db.createObjectStore(STORE_NAMES.MOVEMENT, { keyPath: 'timestamp' });
-        }
-        if (!db.objectStoreNames.contains(STORE_NAMES.SETTINGS)) {
-          db.createObjectStore(STORE_NAMES.SETTINGS);
-        }
-        if (!db.objectStoreNames.contains(STORE_NAMES.ACTIVE)) {
-          db.createObjectStore(STORE_NAMES.ACTIVE);
-        }
-      },
-    });
-  } catch (error) {
-    console.error('Failed to initialize database:', error);
-    throw error;
-  }
-}
-
-async function saveItem(store, value, key = undefined) {
-  try {
-    const db = await initDB();
-    return await db.put(store, value, key);
-  } catch (error) {
-    console.error(`Failed to save item to ${store}:`, error);
-    throw error;
-  }
-}
-
-async function getItem(store, key) {
-  try {
-    const db = await initDB();
-    return await db.get(store, key);
-  } catch (error) {
-    console.error(`Failed to get item from ${store}:`, error);
-    return null;
-  }
-}
-
-async function getAll(store) {
-  try {
-    const db = await initDB();
-    return await db.getAll(store);
-  } catch (error) {
-    console.error(`Failed to get all items from ${store}:`, error);
-    return [];
-  }
-}
-
-async function clearStore(store) {
-  try {
-    const db = await initDB();
-    return await db.clear(store);
-  } catch (error) {
-    console.error(`Failed to clear store ${store}:`, error);
-  }
-}
-
-// --- Main Hook ---
 const useSleepTracking = () => {
   // State
   const [sleepTime, setSleepTime] = useState(DEFAULT_SETTINGS.sleepTime);
@@ -200,7 +47,7 @@ const useSleepTracking = () => {
 
   // Debug logging
   useEffect(() => {
-    console.log('useSleepTracking state updated:', {
+    console.log('🔍 useSleepTracking state updated:', {
       sleepTime,
       wakeTime,
       isTracking,
@@ -211,26 +58,53 @@ const useSleepTracking = () => {
     });
   }, [sleepTime, wakeTime, isTracking, alarmSet, sleepData.length, movementData.length, settings]);
 
-  // --- Initialize ---
+  // Helper functions
+  const createLocalDateTime = (timeString, targetDate = new Date()) => {
+    const [hours, minutes] = timeString.split(':').map(Number);
+    const localDate = new Date(targetDate);
+    localDate.setHours(hours, minutes, 0, 0);
+    return localDate;
+  };
+
+  const getCurrentTimeString = () => {
+    const now = new Date();
+    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+  };
+
+  // Initialize app and load data
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        console.log('Initializing sleep tracking app...');
+        console.log('🚀 Initializing sleep tracking app...');
         
-        // Load saved data
-        const savedSleepData = await getAll(STORE_NAMES.SESSIONS);
-        const savedSettings = await getItem(STORE_NAMES.SETTINGS, 'settings');
-
+        // Load existing sleep sessions
+        const savedSleepData = await getAllFromStorage(STORE_NAMES.SESSIONS);
         if (savedSleepData?.length) {
-          console.log(`Loaded ${savedSleepData.length} sleep sessions`);
-          setSleepData(savedSleepData);
+          console.log(`📊 Loaded ${savedSleepData.length} existing sleep sessions`);
+          // Filter out invalid and active sessions for stats
+          const validSessions = savedSleepData.filter(session => 
+            session && 
+            session.id && 
+            !session.isActive && 
+            session.duration > 0
+          );
+          console.log(`📊 Valid completed sessions: ${validSessions.length}`);
+          setSleepData(savedSleepData); // Keep all sessions for potential recovery
+        } else {
+          console.log('📊 No existing sleep sessions found');
+          setSleepData([]);
         }
 
+        // Load saved settings
+        const savedSettings = await getFromStorage(STORE_NAMES.SETTINGS, 'settings');
         if (savedSettings) {
-          console.log('Loaded saved settings:', savedSettings);
+          console.log('⚙️ Loaded saved settings:', savedSettings);
           setSettings(savedSettings);
           setSleepTime(savedSettings.sleepTime || DEFAULT_SETTINGS.sleepTime);
           setWakeTime(savedSettings.wakeTime || DEFAULT_SETTINGS.wakeTime);
+        } else {
+          console.log('⚙️ Using default settings');
+          await saveSettings(DEFAULT_SETTINGS);
         }
 
         // Try to recover active session
@@ -238,34 +112,43 @@ const useSleepTracking = () => {
 
         // Request notification permission if enabled
         if (savedSettings?.notifications !== false) {
+          console.log('🔔 Requesting notification permission...');
           const permissionGranted = await notificationManager.requestPermission();
-          console.log('Notification permission granted:', permissionGranted);
+          console.log('🔔 Notification permission granted:', permissionGranted);
         }
 
-        console.log('App initialization complete');
+        // Test vibration
+        if (savedSettings?.vibration !== false) {
+          const vibrationSupported = vibrationManager.isSupported;
+          console.log('🔸 Vibration supported:', vibrationSupported);
+        }
+
+        console.log('✅ App initialization complete');
       } catch (err) {
-        console.error('Initialization error:', err);
+        console.error('❌ Initialization error:', err);
+        setSleepData([]);
+        setSettings(DEFAULT_SETTINGS);
       }
     };
 
     initializeApp();
   }, []);
 
-  // --- Recover active session ---
+  // Recover active session on app restart
   const recoverActiveSession = async () => {
     try {
-      console.log('Checking for active session...');
-      const activeSession = await getItem(STORE_NAMES.ACTIVE, 'active');
+      console.log('🔍 Checking for active session...');
+      const activeSession = await getFromStorage(STORE_NAMES.ACTIVE, 'active');
       
       if (activeSession?.isActive) {
-        console.log('Found active session:', activeSession);
+        console.log('🔄 Found active session:', activeSession);
         const now = Date.now();
         const sessionStart = new Date(activeSession.sessionStartTime).getTime();
         const timeSinceStart = now - sessionStart;
 
         // Only recover if session is less than 12 hours old
         if (timeSinceStart < 12 * 60 * 60 * 1000) {
-          console.log('Recovering active session...');
+          console.log('⚡ Recovering active session...');
           
           // Restore session state
           setIsTracking(true);
@@ -273,9 +156,9 @@ const useSleepTracking = () => {
           sessionStartTimeRef.current = new Date(sessionStart);
 
           // Restore movement data
-          const savedMovement = await getAll(STORE_NAMES.MOVEMENT);
+          const savedMovement = await getAllFromStorage(STORE_NAMES.MOVEMENT);
           if (savedMovement?.length) {
-            console.log(`Restored ${savedMovement.length} movement samples`);
+            console.log(`📈 Restored ${savedMovement.length} movement samples`);
             movementSamplesRef.current = savedMovement;
             setMovementData(savedMovement);
           }
@@ -283,11 +166,9 @@ const useSleepTracking = () => {
           // Restart movement tracking
           await startMovementTracking();
 
-          // Restore alarm
+          // Restore alarm with proper timezone handling
           const wakeTimeToUse = activeSession.wakeTime || wakeTime;
-          const [wakeHours, wakeMinutes] = wakeTimeToUse.split(':').map(Number);
-          const wakeUpTime = new Date();
-          wakeUpTime.setHours(wakeHours, wakeMinutes, 0, 0);
+          const wakeUpTime = createLocalDateTime(wakeTimeToUse, new Date());
           
           if (wakeUpTime <= new Date()) {
             wakeUpTime.setDate(wakeUpTime.getDate() + 1);
@@ -295,29 +176,29 @@ const useSleepTracking = () => {
           
           const timeUntilWake = wakeUpTime.getTime() - now;
           
-          if (timeUntilWake > 0) {
-            console.log(`Alarm set for ${timeUntilWake}ms from now`);
+          if (timeUntilWake > 0 && timeUntilWake < 24 * 60 * 60 * 1000) {
+            console.log(`⏰ Recovered alarm set for ${Math.round(timeUntilWake / 1000 / 60)} minutes from now`);
             alarmTimeoutRef.current = setTimeout(() => {
-              console.log('Recovered alarm triggered');
-              completeSession(activeSession);
+              console.log('🚨 Recovered alarm triggered');
+              triggerAlarm(activeSession);
             }, timeUntilWake);
           } else {
-            console.log('Wake time has passed, completing session');
+            console.log('⏰ Wake time has passed, completing session');
             await completeSession(activeSession);
           }
         } else {
-          console.log('Active session too old, clearing...');
-          await clearStore(STORE_NAMES.ACTIVE);
+          console.log('🗑️ Active session too old, clearing...');
+          await clearStorage(STORE_NAMES.ACTIVE);
         }
       } else {
-        console.log('No active session found');
+        console.log('💤 No active session found');
       }
     } catch (error) {
-      console.error('Error recovering active session:', error);
+      console.error('❌ Error recovering active session:', error);
     }
   };
 
-  // --- Bedtime reminder ---
+  // Bedtime reminder setup
   useEffect(() => {
     if (settings.sleepReminders && settings.notifications) {
       setupBedtimeReminder();
@@ -341,20 +222,20 @@ const useSleepTracking = () => {
       }
 
       const timeUntilReminder = reminderTime.getTime() - now.getTime();
-      console.log(`Bedtime reminder set for ${Math.round(timeUntilReminder / 1000 / 60)} minutes from now`);
+      console.log(`🛏️ Bedtime reminder set for ${Math.round(timeUntilReminder / 1000 / 60)} minutes from now`);
       
       bedtimeReminderRef.current = setTimeout(() => {
-        console.log('Bedtime reminder triggered');
+        console.log('🛏️ Bedtime reminder triggered');
         if (settings.notifications) {
           notificationManager.showBedtimeReminder(formatTime12Hour(sleepTime));
         }
         if (settings.vibration) {
-          vibrationManager.notificationVibration();
+          vibrationManager.vibrate([200, 100, 200]);
         }
         setupBedtimeReminder(); // Schedule next reminder
       }, timeUntilReminder);
     } catch (error) {
-      console.error('Error setting up bedtime reminder:', error);
+      console.error('❌ Error setting up bedtime reminder:', error);
     }
   };
 
@@ -362,25 +243,25 @@ const useSleepTracking = () => {
     if (bedtimeReminderRef.current) {
       clearTimeout(bedtimeReminderRef.current);
       bedtimeReminderRef.current = null;
-      console.log('Bedtime reminder cleared');
+      console.log('🛏️ Bedtime reminder cleared');
     }
   };
 
-  // --- Settings management ---
+  // Settings management
   const saveSettings = async (newSettings = null) => {
     try {
       const settingsToSave = newSettings || { ...settings, sleepTime, wakeTime };
-      console.log('Saving settings:', settingsToSave);
+      console.log('💾 Saving settings:', settingsToSave);
       setSettings(settingsToSave);
-      await saveItem(STORE_NAMES.SETTINGS, settingsToSave, 'settings');
+      await saveToStorage(STORE_NAMES.SETTINGS, settingsToSave, 'settings');
     } catch (error) {
-      console.error('Error saving settings:', error);
+      console.error('❌ Error saving settings:', error);
     }
   };
 
   const updateSetting = async (key, value) => {
     try {
-      console.log(`Updating setting ${key} to ${value}`);
+      console.log(`⚙️ Updating setting ${key} to ${value}`);
       const newSettings = { ...settings, [key]: value };
       
       if (key === 'notifications' && value === true) {
@@ -392,8 +273,8 @@ const useSleepTracking = () => {
       }
       
       if (key === 'vibration' && value === true) {
-        if (vibrationManager.isVibrationSupported()) {
-          vibrationManager.notificationVibration();
+        if (vibrationManager.isSupported) {
+          vibrationManager.vibrate([200, 100, 200]);
         } else {
           alert('Vibration is not supported on this device.');
         }
@@ -401,14 +282,14 @@ const useSleepTracking = () => {
       
       await saveSettings(newSettings);
     } catch (error) {
-      console.error('Error updating setting:', error);
+      console.error('❌ Error updating setting:', error);
     }
   };
 
-  // --- Movement tracking ---
+  // Movement tracking
   const startMovementTracking = async () => {
     try {
-      console.log('Starting movement tracking...');
+      console.log('📈 Starting movement tracking...');
       
       // Clean up any existing tracking
       if (motionCleanupRef.current) {
@@ -417,18 +298,18 @@ const useSleepTracking = () => {
 
       // Check if DeviceMotionEvent is available
       if (typeof DeviceMotionEvent === 'undefined') {
-        console.warn('DeviceMotionEvent not supported on this device');
+        console.warn('⚠️ DeviceMotionEvent not supported on this device');
         return;
       }
 
       // Request permission for iOS devices
       if (typeof DeviceMotionEvent.requestPermission === 'function') {
-        console.log('Requesting DeviceMotion permission...');
+        console.log('📱 Requesting DeviceMotion permission...');
         const response = await DeviceMotionEvent.requestPermission();
-        console.log('DeviceMotion permission response:', response);
+        console.log('📱 DeviceMotion permission response:', response);
         
         if (response !== 'granted') {
-          console.error('DeviceMotion permission denied');
+          console.error('❌ DeviceMotion permission denied');
           throw new Error('Motion permission denied');
         }
       }
@@ -473,19 +354,19 @@ const useSleepTracking = () => {
             movementSamplesRef.current = movementSamplesRef.current.slice(-960);
           }
 
-          await saveItem(STORE_NAMES.MOVEMENT, sample, sample.timestamp);
+          await saveToStorage(STORE_NAMES.MOVEMENT, sample, sample.timestamp);
         } catch (error) {
-          console.error('Error sampling movement:', error);
+          console.error('❌ Error sampling movement:', error);
         }
       };
 
       // Add event listener
       window.addEventListener('devicemotion', handleMotion);
-      console.log('DeviceMotion event listener added');
+      console.log('📈 DeviceMotion event listener added');
 
       // Start sampling interval
       sampleIntervalRef.current = setInterval(sampleMovement, SAMPLE_INTERVAL);
-      console.log(`Movement sampling started (${SAMPLE_INTERVAL}ms interval)`);
+      console.log(`📈 Movement sampling started (${SAMPLE_INTERVAL}ms interval)`);
 
       // Update UI every minute
       trackingIntervalRef.current = setInterval(() => {
@@ -503,41 +384,27 @@ const useSleepTracking = () => {
           clearInterval(trackingIntervalRef.current);
           trackingIntervalRef.current = null;
         }
-        console.log('Movement tracking cleaned up');
+        console.log('📈 Movement tracking cleaned up');
       };
 
-      console.log('Movement tracking started successfully');
+      console.log('✅ Movement tracking started successfully');
     } catch (error) {
-      console.error('Failed to start movement tracking:', error);
+      console.error('❌ Failed to start movement tracking:', error);
       throw error;
     }
   };
 
-  // Helper function to create local date from time string
-  const createLocalDateTime = (timeString, targetDate = new Date()) => {
-    const [hours, minutes] = timeString.split(':').map(Number);
-    const localDate = new Date(targetDate);
-    localDate.setHours(hours, minutes, 0, 0);
-    return localDate;
-  };
-
-  // Helper function to get current local time as HH:MM string
-  const getCurrentTimeString = () => {
-    const now = new Date();
-    return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-  };
-
-  // --- Sleep tracking control ---
+  // Start sleep tracking
   const startSleepTracking = async () => {
     try {
-      console.log('Starting sleep tracking...');
+      console.log('🌙 Starting sleep tracking...');
       
       // Validate required data
       if (!sleepTime || !wakeTime) {
         throw new Error('Sleep time and wake time must be set');
       }
       
-      console.log(`Sleep: ${sleepTime}, Wake: ${wakeTime}`);
+      console.log(`🌙 Sleep: ${sleepTime}, Wake: ${wakeTime}`);
       
       // Update state
       setIsTracking(true);
@@ -545,7 +412,7 @@ const useSleepTracking = () => {
       
       // Save current settings
       await saveSettings();
-      console.log('Settings saved');
+      console.log('💾 Settings saved');
 
       // Create session data with local time
       const startTime = new Date();
@@ -561,17 +428,16 @@ const useSleepTracking = () => {
         isActive: true,
       };
 
-      // Save active session to IndexedDB
-      await saveItem(STORE_NAMES.ACTIVE, sleepSession, 'active');
-      console.log('Active session saved');
+      // Save active session to storage
+      await saveToStorage(STORE_NAMES.ACTIVE, sleepSession, 'active');
+      console.log('💾 Active session saved');
 
       // Start movement tracking (non-blocking)
       try {
         await startMovementTracking();
-        console.log('Movement tracking started successfully');
+        console.log('📈 Movement tracking started successfully');
       } catch (motionError) {
-        console.warn('Movement tracking failed, continuing without it:', motionError);
-        // Don't fail the whole process if motion tracking fails
+        console.warn('⚠️ Movement tracking failed, continuing without it:', motionError);
       }
 
       // Schedule wake-up alarm using local time
@@ -584,9 +450,9 @@ const useSleepTracking = () => {
       }
 
       const timeUntilWake = wakeUpTime.getTime() - now.getTime();
-      console.log(`Current time: ${getCurrentTimeString()}`);
-      console.log(`Wake time set for: ${wakeTime} (${wakeUpTime.toLocaleString()})`);
-      console.log(`Time until wake: ${Math.round(timeUntilWake / 1000 / 60)} minutes`);
+      console.log(`⏰ Current time: ${getCurrentTimeString()}`);
+      console.log(`⏰ Wake time set for: ${wakeTime} (${wakeUpTime.toLocaleString()})`);
+      console.log(`⏰ Time until wake: ${Math.round(timeUntilWake / 1000 / 60)} minutes`);
       
       if (timeUntilWake > 0 && timeUntilWake < 24 * 60 * 60 * 1000) { // Max 24 hours
         alarmTimeoutRef.current = setTimeout(() => {
@@ -601,19 +467,22 @@ const useSleepTracking = () => {
       // Send notifications (non-blocking)
       try {
         if (settings.notifications) {
-          notificationManager.showSleepTrackingStarted();
+          notificationManager.showNotification('Sleep Tracking Started', {
+            body: 'Sweet dreams! We\'ll track your sleep and wake you up.',
+            tag: 'sleep-started'
+          });
         }
         if (settings.vibration) {
-          vibrationManager.notificationVibration();
+          vibrationManager.vibrate([200, 100, 200]);
         }
       } catch (notifError) {
-        console.warn('Notification failed:', notifError);
+        console.warn('⚠️ Notification failed:', notifError);
       }
 
-      console.log('Sleep tracking started successfully');
+      console.log('✅ Sleep tracking started successfully');
       
     } catch (err) {
-      console.error('Failed to start sleep tracking:', err);
+      console.error('❌ Failed to start sleep tracking:', err);
       
       // Reset state on error
       setIsTracking(false);
@@ -621,9 +490,9 @@ const useSleepTracking = () => {
       
       // Clean up any partial state
       try {
-        await clearStore(STORE_NAMES.ACTIVE);
+        await clearStorage(STORE_NAMES.ACTIVE);
       } catch (clearError) {
-        console.error('Failed to clear active store on error:', clearError);
+        console.error('❌ Failed to clear active store on error:', clearError);
       }
       
       // Re-throw with more context
@@ -631,77 +500,104 @@ const useSleepTracking = () => {
     }
   };
 
-  // New function to handle alarm trigger with enhanced notifications
+  // Enhanced alarm trigger
   const triggerAlarm = async (sessionData) => {
     try {
       console.log('🚨 ALARM TRIGGERED! 🚨');
-      console.log('Triggering wake-up alarm at:', new Date().toLocaleString());
+      console.log('🚨 Triggering wake-up alarm at:', new Date().toLocaleString());
+      console.log('🚨 Session data:', sessionData);
       
-      // Enhanced wake-up vibration pattern
-      if (settings.vibration && vibrationManager.isVibrationSupported()) {
-        // Multiple vibration bursts for wake-up
+      // 1. Enhanced vibration pattern
+      if (settings.vibration && vibrationManager.isSupported) {
+        console.log('🔸 Starting wake-up vibrations');
         vibrationManager.wakeUpVibration();
+      }
+
+      // 2. Multiple persistent notifications
+      if (settings.notifications) {
+        console.log('🔔 Checking notification permission:', Notification?.permission);
         
-        // Additional vibrations every 2 seconds for 10 seconds
-        let vibrationCount = 0;
-        const vibrationInterval = setInterval(() => {
-          if (vibrationCount < 5) {
-            navigator.vibrate([500, 100, 500]);
-            vibrationCount++;
-          } else {
-            clearInterval(vibrationInterval);
-          }
-        }, 2000);
+        if (notificationManager.permission === 'granted') {
+          console.log('📱 Showing wake-up notifications');
+          
+          // Show main alarm notification
+          await notificationManager.showWakeUpNotification();
+
+          // Show additional notifications every 15 seconds for 2 minutes
+          let notificationCount = 0;
+          const notificationInterval = setInterval(async () => {
+            if (notificationCount < 8 && isTracking) { // 8 * 15 seconds = 2 minutes
+              notificationCount++;
+              console.log(`🔔 Alarm notification ${notificationCount}/8`);
+              
+              await notificationManager.showNotification(`⏰ WAKE UP! (${notificationCount}/8)`, {
+                body: `ALARM! Time to wake up! Tap to stop.`,
+                tag: `wake-up-alarm-${notificationCount}`,
+                requireInteraction: true,
+                vibrate: [500, 200, 500]
+              });
+            } else {
+              clearInterval(notificationInterval);
+              console.log('🔔 Alarm notification sequence completed');
+            }
+          }, 15000); // Every 15 seconds
+        } else {
+          console.error('❌ Cannot show notifications - permission not granted');
+          alert('WAKE UP! Your alarm is going off but notifications are disabled.');
+        }
       }
 
-      // Enhanced wake-up notification
-      if (settings.notifications && Notification.permission === 'granted') {
-        // Show persistent notification
-        const notification = new Notification('⏰ WAKE UP! ⏰', {
-          body: `It's ${formatTime12Hour(wakeTime)}! Time to wake up! Tap to stop alarm.`,
-          icon: '/icon-192x192.png',
-          tag: 'wake-up-alarm',
-          requireInteraction: true, // Keep notification visible
-          vibrate: [1000, 500, 1000, 500, 1000],
-          actions: [
-            { action: 'stop', title: '✋ Stop Alarm' },
-            { action: 'snooze', title: '😴 Snooze 5min' }
-          ]
-        });
-
-        // Handle notification actions
-        notification.onclick = () => {
-          console.log('Wake-up notification clicked');
-          notification.close();
-          completeSession(sessionData);
-        };
-      }
-
-      // Auto-complete session after 1 minute if not manually stopped
+      // 3. Browser alert as fallback
       setTimeout(() => {
         if (isTracking) {
-          console.log('Auto-completing session after 1 minute');
+          console.log('🚨 Showing browser alert as backup');
+          const userResponse = confirm('⏰ WAKE UP! Your alarm is going off. Click OK to stop tracking.');
+          if (userResponse) {
+            completeSession(sessionData);
+          }
+        }
+      }, 5000); // 5 seconds after alarm starts
+
+      // 4. Auto-complete session after 3 minutes if not manually stopped
+      setTimeout(() => {
+        if (isTracking) {
+          console.log('⏱️ Auto-completing session after 3 minutes');
           completeSession(sessionData);
         }
-      }, 60000);
+      }, 180000); // 3 minutes
 
-      console.log('Wake-up alarm triggered successfully');
+      // 5. Audio alarm (if supported)
+      try {
+        if ('speechSynthesis' in window) {
+          const utterance = new SpeechSynthesisUtterance('Wake up! Your alarm is going off!');
+          utterance.volume = 1;
+          utterance.rate = 1;
+          utterance.pitch = 1;
+          speechSynthesis.speak(utterance);
+        }
+      } catch (audioError) {
+        console.warn('⚠️ Audio alarm failed:', audioError);
+      }
+
+      console.log('✅ Wake-up alarm sequence initiated');
     } catch (error) {
-      console.error('Error triggering alarm:', error);
-      // Fallback to just completing the session
+      console.error('❌ Error triggering alarm:', error);
+      // Emergency fallback
+      alert('WAKE UP! Your alarm failed but tracking is complete.');
       completeSession(sessionData);
     }
   };
 
+  // Stop sleep tracking
   const stopSleepTracking = async () => {
     try {
-      console.log('Stopping sleep tracking...');
-      const activeSession = await getItem(STORE_NAMES.ACTIVE, 'active');
+      console.log('🛑 Stopping sleep tracking...');
+      const activeSession = await getFromStorage(STORE_NAMES.ACTIVE, 'active');
       
       if (activeSession) {
         await completeSession(activeSession);
       } else {
-        console.log('No active session found, resetting state');
+        console.log('💤 No active session found, resetting state');
         setIsTracking(false);
         setAlarmSet(false);
         
@@ -715,50 +611,84 @@ const useSleepTracking = () => {
         }
       }
     } catch (error) {
-      console.error('Error stopping sleep tracking:', error);
+      console.error('❌ Error stopping sleep tracking:', error);
     }
   };
 
+  // Complete sleep session
   const completeSession = async (sessionData) => {
     try {
-      console.log('Completing sleep session...');
+      console.log('💾 Completing sleep session...');
+      console.log('💾 Session data to complete:', sessionData);
       
       const endTime = new Date();
       const startTime = sessionStartTimeRef.current || new Date(sessionData.sessionStartTime);
       const duration = Math.round((endTime - startTime) / (1000 * 60 * 60) * 10) / 10;
 
-      // Store actual wake time in local timezone
+      // Store actual wake time in readable format
       const localWakeTime = `${endTime.getHours().toString().padStart(2, '0')}:${endTime.getMinutes().toString().padStart(2, '0')}`;
 
       const completedSession = {
         ...sessionData,
         endTime: endTime.toISOString(),
-        actualWakeTime: localWakeTime, // Store as HH:MM format
-        actualWakeTimestamp: endTime.toISOString(), // Keep ISO for reference
-        duration,
+        actualWakeTime: localWakeTime, // Store as HH:MM format for display
+        actualWakeTimestamp: endTime.toISOString(), // Keep ISO for calculations
+        duration: duration,
         movementData: [...movementSamplesRef.current],
         isActive: false,
+        completedAt: endTime.toISOString()
       };
 
-      // Save completed session
-      await saveItem(STORE_NAMES.SESSIONS, completedSession);
-      setSleepData(prev => [...prev, completedSession]);
-      
-      console.log(`Session completed: ${duration} hours, woke up at ${localWakeTime}`);
+      console.log('💾 Saving completed session:', {
+        id: completedSession.id,
+        duration: completedSession.duration,
+        actualWakeTime: completedSession.actualWakeTime,
+        movementDataLength: completedSession.movementData.length
+      });
 
-      // Reset state
+      // Save completed session to storage
+      try {
+        await saveToStorage(STORE_NAMES.SESSIONS, completedSession);
+        console.log('✅ Session saved to storage successfully');
+        
+        // Update state immediately - replace any existing session with same ID
+        setSleepData(prev => {
+          const filtered = prev.filter(s => s.id !== completedSession.id);
+          const updated = [...filtered, completedSession];
+          console.log('📊 Updated sleep data state, total sessions:', updated.length);
+          console.log('📊 Completed sessions:', updated.filter(s => !s.isActive).length);
+          return updated;
+        });
+      } catch (saveError) {
+        console.error('❌ Failed to save session to storage:', saveError);
+        // Still update state even if storage save fails
+        setSleepData(prev => {
+          const filtered = prev.filter(s => s.id !== completedSession.id);
+          return [...filtered, completedSession];
+        });
+      }
+
+      // Reset all tracking state
+      console.log('🔄 Resetting tracking state...');
       setIsTracking(false);
       setAlarmSet(false);
       sessionStartTimeRef.current = null;
       movementSamplesRef.current = [];
       setMovementData([]);
 
-      // Clean up
-      await clearStore(STORE_NAMES.ACTIVE);
-      await clearStore(STORE_NAMES.MOVEMENT);
+      // Clean up storage
+      try {
+        await clearStorage(STORE_NAMES.ACTIVE);
+        await clearStorage(STORE_NAMES.MOVEMENT);
+        console.log('🗑️ Cleaned up temporary data');
+      } catch (cleanupError) {
+        console.error('❌ Failed to cleanup stores:', cleanupError);
+      }
 
+      // Clean up intervals and timeouts
       if (motionCleanupRef.current) {
         motionCleanupRef.current();
+        motionCleanupRef.current = null;
       }
 
       if (alarmTimeoutRef.current) {
@@ -769,25 +699,55 @@ const useSleepTracking = () => {
       // Send completion notification
       try {
         if (settings.notifications) {
-          notificationManager.showWakeUpNotification();
+          await notificationManager.showNotification('Sleep Session Complete', {
+            body: `You slept for ${duration} hours. Session saved successfully!`,
+            tag: 'session-complete',
+            vibrate: [200, 100, 200]
+          });
         }
       } catch (notifError) {
-        console.warn('Wake-up notification failed:', notifError);
+        console.warn('⚠️ Completion notification failed:', notifError);
       }
 
-      console.log('Sleep session completed successfully');
+      console.log(`✅ Sleep session completed successfully: ${duration} hours, woke up at ${localWakeTime}`);
+      
     } catch (error) {
-      console.error('Error completing session:', error);
+      console.error('❌ Error completing session:', error);
+      
+      // Emergency state reset
+      setIsTracking(false);
+      setAlarmSet(false);
+      
+      if (alarmTimeoutRef.current) {
+        clearTimeout(alarmTimeoutRef.current);
+        alarmTimeoutRef.current = null;
+      }
     }
   };
 
-  // --- Stats calculation ---
+  // Calculate statistics
   const calculateStats = () => {
     try {
-      if (!sleepData.length) return null;
+      console.log('📊 Calculating stats from sleepData:', sleepData.length, 'total sessions');
       
-      const completed = sleepData.filter(s => !s.isActive && s.duration > 0);
-      if (!completed.length) return null;
+      if (!sleepData.length) {
+        console.log('📊 No sleep data available for stats');
+        return null;
+      }
+      
+      // Filter for completed sessions only
+      const completed = sleepData.filter(s => 
+        !s.isActive && 
+        s.duration > 0 && 
+        typeof s.duration === 'number'
+      );
+      
+      console.log('📊 Completed sessions for stats:', completed.length);
+      
+      if (!completed.length) {
+        console.log('📊 No completed sessions for stats');
+        return null;
+      }
       
       const durations = completed.map(s => s.duration);
       const total = durations.reduce((sum, d) => sum + d, 0);
@@ -797,7 +757,7 @@ const useSleepTracking = () => {
       const weeklyTotal = lastWeek.reduce((sum, s) => sum + s.duration, 0);
       const weeklyAvg = weeklyTotal / lastWeek.length;
 
-      return {
+      const stats = {
         totalSessions: completed.length,
         averageSleep: Math.round(avg * 100) / 100,
         weeklyAverage: Math.round(weeklyAvg * 100) / 100,
@@ -806,8 +766,11 @@ const useSleepTracking = () => {
         shortestSleep: Math.min(...durations),
         longestSleep: Math.max(...durations),
       };
+
+      console.log('📊 Calculated stats:', stats);
+      return stats;
     } catch (error) {
-      console.error('Error calculating stats:', error);
+      console.error('❌ Error calculating stats:', error);
       return null;
     }
   };
@@ -845,4 +808,4 @@ const useSleepTracking = () => {
   };
 };
 
-export default useSleepTracking;
+export default useSleepTracking;git a

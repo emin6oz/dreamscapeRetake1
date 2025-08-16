@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS = {
   notifications: true,
   vibration: true,
   darkMode: true,
-  sleepReminders: false 
+  sleepReminders: true 
 }
 
 export const SLEEP_PHASES = {
