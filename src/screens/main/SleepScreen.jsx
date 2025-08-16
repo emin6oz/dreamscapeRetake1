@@ -79,13 +79,13 @@ const SleepScreen = () => {
       <div className="max-w-md mx-auto h-full flex flex-col">
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-medium">Sleep tracker</h1>
-          <button
+          {/* <button
             onClick={() => setShowInstructions(true)}
             className="p-2 bg-blue-600 rounded-lg"
             title="Instructions"
           >
             <Info className="w-5 h-5" />
-          </button>
+          </button> */}
         </div>
 
         {/* Tracking Status Indicator */}

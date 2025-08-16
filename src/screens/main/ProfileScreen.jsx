@@ -30,13 +30,14 @@ const ProfileScreen = () => {
   }
 
   // Test vibration system
-  const handleTestVibration = () => {
-    if (vibrationManager.isVibrationSupported()) {
-      testVibration()
-    } else {
-      alert('Vibration is not supported on this device.')
-    }
+ const handleTestVibration = () => {
+  if (vibrationManager.isSupported) {
+    testVibration()
+  } else {
+    alert('Vibration is not supported on this device.')
   }
+}
+
 
   // Get notification permission status
   const getNotificationStatus = () => {
@@ -47,8 +48,9 @@ const ProfileScreen = () => {
 
   // Get vibration support status
   const getVibrationStatus = () => {
-    return vibrationManager.isVibrationSupported() ? 'Supported' : 'Not supported'
-  }
+  return vibrationManager.isSupported ? 'Supported' : 'Not supported'
+}
+
 
   return (
     <div className="min-h-full bg-gray-900 text-white">

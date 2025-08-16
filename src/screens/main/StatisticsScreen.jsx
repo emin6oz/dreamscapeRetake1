@@ -11,6 +11,32 @@ const StatisticsScreen = () => {
   const [selectedSession, setSelectedSession] = useState(null)
   const [showDetailed, setShowDetailed] = useState(false)
 
+  // ===== DEBUG CODE - ADD THESE CONSOLE LOGS =====
+  console.log('🔍 StatisticsScreen Debug:');
+  console.log('📊 sleepData from hook:', sleepData);
+  console.log('📊 sleepData length:', sleepData.length);
+  console.log('📊 sleepData content:', sleepData.map(s => ({
+    id: s.id,
+    isActive: s.isActive,
+    duration: s.duration,
+    date: s.date,
+    dateType: typeof s.date
+  })));
+
+  const stats = calculateStats()
+  console.log('📊 calculateStats() result:', stats);
+
+  // Check if we have any valid sessions
+  const validSessions = sleepData.filter(s => 
+    !s.isActive && 
+    s.duration > 0 && 
+    typeof s.duration === 'number'
+  );
+  console.log('✅ Valid sessions for stats:', validSessions.length);
+  console.log('✅ Valid sessions details:', validSessions);
+
+  // ===== END DEBUG CODE =====
+
   // Helper function to format hours nicely
   const formatHours = (hours) => {
     if (hours === 0) return '0h'
@@ -18,29 +44,58 @@ const StatisticsScreen = () => {
     return `${hours.toFixed(1)}h`
   }
 
-  // Get available dates (dates with sleep data)
+  // Get available dates (dates with sleep data) - FIXED DATE PROCESSING
   const availableDates = useMemo(() => {
     const dates = new Set()
     sleepData.forEach(session => {
       if (!session.isActive) {
-        const sessionDate = new Date(session.date)
-        dates.add(sessionDate.toDateString())
+        console.log('📅 Processing session date:', session.date, 'Type:', typeof session.date);
+        
+        // Handle different date formats that might be in the data
+        let sessionDateString;
+        if (typeof session.date === 'string') {
+          // If it's already a date string like "Sun Aug 17 2025", use it directly
+          sessionDateString = session.date;
+        } else {
+          // If it's an ISO string or Date object, convert it
+          const sessionDate = new Date(session.date);
+          sessionDateString = sessionDate.toDateString();
+        }
+        
+        console.log('📅 Processed date string:', sessionDateString);
+        dates.add(sessionDateString);
       }
     })
-    return Array.from(dates).sort((a, b) => new Date(b) - new Date(a))
+    const dateArray = Array.from(dates).sort((a, b) => new Date(b) - new Date(a))
+    console.log('📅 Available dates:', dateArray);
+    return dateArray;
   }, [sleepData])
 
-  // Filter data by selected date
+  // Filter data by selected date - FIXED FILTERING
   const filteredData = useMemo(() => {
     const selectedDateString = selectedDate.toDateString()
-    return sleepData.filter(session => 
-      !session.isActive && session.date === selectedDateString
-    )
+    console.log('🗓️ Selected date string:', selectedDateString);
+    
+    const filtered = sleepData.filter(session => {
+      if (session.isActive) return false;
+      
+      // Handle different date formats in session data
+      let sessionDateString;
+      if (typeof session.date === 'string') {
+        sessionDateString = session.date;
+      } else {
+        const sessionDate = new Date(session.date);
+        sessionDateString = sessionDate.toDateString();
+      }
+      
+      console.log(`🗓️ Comparing: "${selectedDateString}" vs "${sessionDateString}"`);
+      return sessionDateString === selectedDateString;
+    });
+    
+    console.log('🗓️ Filtered data for selected date:', filtered);
+    return filtered;
   }, [sleepData, selectedDate])
 
-  // Calculate stats for selected date or all data
-  const stats = calculateStats()
-  
   // Generate date picker dates (30 days range)
   const generateDateRange = () => {
     const dates = []
@@ -149,6 +204,8 @@ const StatisticsScreen = () => {
       <div className="max-w-md mx-auto">
         <h1 className="text-2xl font-medium text-center mb-8">Sleep Statistics</h1>
 
+       
+
         {/* Date Picker */}
         <DatePicker />
 
@@ -162,12 +219,11 @@ const StatisticsScreen = () => {
                   <h3 className="font-semibold mb-4 text-center">
                     {selectedDate.toDateString() === new Date().toDateString() 
                       ? "Today's Sleep" 
-                      : selectedDate.toLocaleDateString('en-US', { 
+                      : `Sleep for ${selectedDate.toLocaleDateString('en-US', { 
                           weekday: 'long', 
-                          year: 'numeric', 
                           month: 'long', 
                           day: 'numeric' 
-                        })
+                        })}`
                     }
                   </h3>
                   
@@ -177,6 +233,7 @@ const StatisticsScreen = () => {
                         <SleepCard 
                           session={session} 
                           isActive={session.isActive}
+                          onClick={() => handleSleepCardClick(session)}
                         />
                       </div>
                     ))}
@@ -274,10 +331,11 @@ const StatisticsScreen = () => {
                 </h3>
                 <div className="space-y-3 max-h-80 overflow-y-auto scrollbar-custom">
                   {sleepData.slice(-10).reverse().map((session) => (
-                    <div key={session.id} onClick={() => handleSleepCardClick(session)}>
+                    <div key={session.id}>
                       <SleepCard 
                         session={session} 
                         isActive={session.isActive}
+                        onClick={() => handleSleepCardClick(session)}
                       />
                     </div>
                   ))}
@@ -325,6 +383,17 @@ const StatisticsScreen = () => {
                 <li>• Wake up to your alarm</li>
               </ul>
             </div>
+            
+            {/* Debug panel for when no stats */}
+            {/* <div className="bg-yellow-900/20 border border-yellow-500 rounded-xl p-4 mt-6 text-xs">
+              <h4 className="font-semibold text-yellow-400 mb-2">🔍 No Stats Debug:</h4>
+              <div className="space-y-1 text-gray-300 text-left">
+                <div>Total sessions in sleepData: <span className="text-yellow-400">{sleepData.length}</span></div>
+                <div>Sessions marked as active: <span className="text-yellow-400">{sleepData.filter(s => s.isActive).length}</span></div>
+                <div>Sessions with duration &gt; 0: <span className="text-yellow-400">{sleepData.filter(s => s.duration > 0).length}</span></div>
+                <div>Sessions that are completed: <span className="text-yellow-400">{sleepData.filter(s => !s.isActive && s.duration > 0).length}</span></div>
+              </div>
+            </div> */}
           </div>
         )}
       </div>

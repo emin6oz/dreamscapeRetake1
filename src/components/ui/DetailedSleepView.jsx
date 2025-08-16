@@ -15,17 +15,94 @@ const DetailedSleepView = ({ session, onBack }) => {
     return `${hours}h ${minutes}m`
   }
 
+  // Helper function to format ISO timestamps to readable time
+  const formatTimeFromISO = (isoString) => {
+    if (!isoString) return 'Unknown';
+    
+    try {
+      // If it's already in HH:MM format, return as is
+      if (typeof isoString === 'string' && isoString.match(/^\d{2}:\d{2}$/)) {
+        return isoString;
+      }
+      
+      // Convert ISO string to local time
+      const date = new Date(isoString);
+      return date.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    } catch (error) {
+      console.error('Error formatting time:', error);
+      return isoString; // Return original if conversion fails
+    }
+  }
+
+  // Get properly formatted times for display
+  const getDisplayTimes = () => {
+    // For bedtime, prefer sleepTime (HH:MM format), then convert startTime
+    const bedtime = session.sleepTime || formatTimeFromISO(session.startTime);
+    
+    // For wake time, prefer actualWakeTime, then wakeTime, then convert endTime
+    const wakeTime = session.actualWakeTime || session.wakeTime || formatTimeFromISO(session.endTime);
+    
+    return { bedtime, wakeTime };
+  }
+
+  // Format date to readable format
+  const formatDateDisplay = (isoString) => {
+    if (!isoString) return 'Unknown';
+    
+    try {
+      const date = new Date(isoString);
+      return date.toLocaleDateString('en-US', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch (error) {
+      return isoString;
+    }
+  }
+
+  const { bedtime, wakeTime } = getDisplayTimes();
+
   // Generate sleep phases based on movement data
   const generateSleepPhases = () => {
-    if (!session.movementData || session.movementData.length === 0) {
+    // Handle both old movementData array and new movementDataSummary format
+    let movementData = session.movementData;
+    
+    // If no movementData but we have movementDataSummary, create fake data for visualization
+    if ((!movementData || movementData.length === 0) && session.movementDataSummary) {
+      const { totalSamples, averageMovement, restlessPeriods } = session.movementDataSummary;
+      
+      // Create a simplified visualization based on summary data
+      movementData = [];
+      for (let i = 0; i < Math.min(totalSamples, 50); i++) {
+        // Generate movement values based on averages and restless periods
+        const isRestless = i < restlessPeriods;
+        const movement = isRestless ? 
+          averageMovement * 2 + Math.random() * 2 : 
+          averageMovement + Math.random() * 0.5;
+        
+        movementData.push({
+          movement,
+          time: `Sample ${i + 1}`,
+          intensity: movement > 6 ? 'restless' : movement > 3 ? 'light' : 'calm'
+        });
+      }
+    }
+
+    if (!movementData || movementData.length === 0) {
       return []
     }
 
     const phases = []
-    const movementData = session.movementData.slice().reverse() // Start from earliest
+    const dataToUse = movementData.slice().reverse() // Start from earliest
 
-    for (let i = 0; i < movementData.length; i++) {
-      const movement = movementData[i].movement
+    for (let i = 0; i < dataToUse.length; i++) {
+      const movement = dataToUse[i].movement
       let phase = 'deep'
       
       if (movement > 8) phase = 'awake'
@@ -33,7 +110,7 @@ const DetailedSleepView = ({ session, onBack }) => {
       else if (movement > 3) phase = 'rem'
       
       phases.push({
-        time: movementData[i].time,
+        time: dataToUse[i].time,
         phase,
         movement,
         index: i
@@ -47,6 +124,19 @@ const DetailedSleepView = ({ session, onBack }) => {
 
   // Calculate sleep quality score
   const calculateSleepQuality = () => {
+    // Use movementDataSummary if available, otherwise fall back to old format
+    if (session.movementDataSummary) {
+      const { averageMovement, restlessPeriods, totalSamples } = session.movementDataSummary;
+      
+      const durationScore = Math.min(session.duration / 8 * 100, 100);
+      const movementScore = Math.max(100 - (averageMovement * 10), 0);
+      const restfulnessScore = totalSamples > 0 ? 
+        Math.max(100 - ((restlessPeriods / totalSamples) * 100), 0) : 85;
+
+      return Math.round((durationScore + movementScore + restfulnessScore) / 3);
+    }
+
+    // Fallback to old calculation if movementData exists
     if (!session.movementData || session.movementData.length === 0) return 85
 
     const avgMovement = session.movementData.reduce((sum, data) => sum + data.movement, 0) / session.movementData.length
@@ -63,15 +153,44 @@ const DetailedSleepView = ({ session, onBack }) => {
 
   // Movement Graph Component
   const MovementGraph = () => {
-    if (!session.movementData || session.movementData.length === 0) {
+    // Handle both movementData and movementDataSummary
+    let dataToDisplay = session.movementData;
+    
+    if ((!dataToDisplay || dataToDisplay.length === 0) && session.movementDataSummary) {
+      // Generate visualization data from summary
+      const { totalSamples, averageMovement, restlessPeriods } = session.movementDataSummary;
+      dataToDisplay = [];
+      
+      for (let i = 0; i < Math.min(totalSamples, 50); i++) {
+        const isRestless = i < restlessPeriods;
+        const movement = isRestless ? 
+          averageMovement * 2 + Math.random() * 2 : 
+          averageMovement + Math.random() * 0.5;
+        
+        dataToDisplay.push({
+          movement,
+          time: `${Math.floor(i * (session.duration * 60) / totalSamples)}min`,
+          intensity: movement > 6 ? 'restless' : movement > 3 ? 'light' : 'calm'
+        });
+      }
+    }
+
+    if (!dataToDisplay || dataToDisplay.length === 0) {
       return (
         <div className="bg-gray-800 rounded-xl p-4 text-center">
           <p className="text-gray-400">No movement data available</p>
+          {session.movementDataSummary && (
+            <div className="mt-4 text-sm text-gray-500">
+              <p>Summary: {session.movementDataSummary.totalSamples} samples recorded</p>
+              <p>Average movement: {session.movementDataSummary.averageMovement?.toFixed(2)}</p>
+              <p>Restless periods: {session.movementDataSummary.restlessPeriods}</p>
+            </div>
+          )}
         </div>
       )
     }
 
-    const maxMovement = Math.max(...session.movementData.map(d => d.movement))
+    const maxMovement = Math.max(...dataToDisplay.map(d => d.movement))
     
     return (
       <div className="bg-gray-800 rounded-xl p-4">
@@ -83,7 +202,7 @@ const DetailedSleepView = ({ session, onBack }) => {
         {/* Graph */}
         <div className="relative h-32 bg-gray-900 rounded-lg p-2 mb-4">
           <div className="flex items-end justify-between h-full">
-            {session.movementData.slice(0, 50).map((data, index) => {
+            {dataToDisplay.slice(0, 50).map((data, index) => {
               const height = (data.movement / maxMovement) * 100
               const color = data.movement > 6 ? 'bg-red-400' : 
                            data.movement > 3 ? 'bg-yellow-400' : 'bg-green-400'
@@ -121,6 +240,13 @@ const DetailedSleepView = ({ session, onBack }) => {
             <span className="text-gray-400">Restless</span>
           </div>
         </div>
+        
+        {/* Show summary if using generated data */}
+        {session.movementDataSummary && (!session.movementData || session.movementData.length === 0) && (
+          <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-500">
+            <p>* Graph generated from movement summary data</p>
+          </div>
+        )}
       </div>
     )
   }
@@ -131,6 +257,11 @@ const DetailedSleepView = ({ session, onBack }) => {
       return (
         <div className="bg-gray-800 rounded-xl p-4 text-center">
           <p className="text-gray-400">No sleep phase data available</p>
+          {session.movementDataSummary && (
+            <div className="mt-4 text-sm text-gray-500">
+              <p>Movement summary shows {session.movementDataSummary.totalSamples} samples were recorded</p>
+            </div>
+          )}
         </div>
       )
     }
@@ -260,11 +391,11 @@ const DetailedSleepView = ({ session, onBack }) => {
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div>
                     <p className="text-gray-400">Bedtime</p>
-                    <p className="font-semibold">{session.startTime}</p>
+                    <p className="font-semibold">{bedtime}</p>
                   </div>
                   <div>
                     <p className="text-gray-400">Wake Time</p>
-                    <p className="font-semibold">{session.endTime}</p>
+                    <p className="font-semibold">{wakeTime}</p>
                   </div>
                   <div>
                     <p className="text-gray-400">Duration</p>
@@ -275,6 +406,15 @@ const DetailedSleepView = ({ session, onBack }) => {
                     <p className="font-semibold text-green-400">{sleepQuality}%</p>
                   </div>
                 </div>
+                
+                {/* Debug info for development */}
+                {/* {process.env.NODE_ENV === 'development' && (
+                  <div className="mt-4 pt-4 border-t border-gray-700 text-xs text-gray-600">
+                    <div>Raw bedtime: {session.startTime}</div>
+                    <div>Raw wake time: {session.endTime}</div>
+                    <div>Formatted: {bedtime} → {wakeTime}</div>
+                  </div>
+                )} */}
               </div>
 
               {/* Movement Summary */}
@@ -283,18 +423,40 @@ const DetailedSleepView = ({ session, onBack }) => {
                   <TrendingUp className="w-4 h-4 mr-2 text-green-400" />
                   Movement Summary
                 </h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-gray-400">Total Movements</p>
-                    <p className="font-semibold">{session.movementData?.length || 0}</p>
+                
+                {session.movementDataSummary ? (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-400">Total Samples</p>
+                      <p className="font-semibold">{session.movementDataSummary.totalSamples}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Average Movement</p>
+                      <p className="font-semibold">{session.movementDataSummary.averageMovement?.toFixed(2) || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Restless Periods</p>
+                      <p className="font-semibold text-yellow-400">{session.movementDataSummary.restlessPeriods}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Sleep Quality</p>
+                      <p className="font-semibold text-green-400">{sleepQuality}%</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-gray-400">Restless Periods</p>
-                    <p className="font-semibold text-yellow-400">
-                      {session.movementData?.filter(d => d.movement > 6).length || 0}
-                    </p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-gray-400">Total Movements</p>
+                      <p className="font-semibold">{session.movementData?.length || 0}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-400">Restless Periods</p>
+                      <p className="font-semibold text-yellow-400">
+                        {session.movementData?.filter(d => d.movement > 6).length || 0}
+                      </p>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Sleep Recommendations */}
@@ -307,7 +469,8 @@ const DetailedSleepView = ({ session, onBack }) => {
                   {session.duration < 7 && (
                     <p>• Try to sleep 7-9 hours for optimal recovery</p>
                   )}
-                  {session.movementData?.filter(d => d.movement > 6).length > 10 && (
+                  {((session.movementDataSummary?.restlessPeriods || 0) > 10 || 
+                    (session.movementData?.filter(d => d.movement > 6).length || 0) > 10) && (
                     <p>• Consider a more comfortable mattress or pillow</p>
                   )}
                   {sleepQuality < 70 && (
@@ -315,6 +478,9 @@ const DetailedSleepView = ({ session, onBack }) => {
                   )}
                   {sleepQuality >= 80 && (
                     <p>• Great sleep! Keep up the good routine</p>
+                  )}
+                  {session.duration >= 7 && session.duration <= 9 && sleepQuality >= 70 && (
+                    <p>• Your sleep duration and quality are in the healthy range</p>
                   )}
                 </div>
               </div>

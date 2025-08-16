@@ -340,13 +340,17 @@ const useSleepTracking = () => {
             intensity = 'light';
           }
 
+          // Create movement sample with proper structure for IndexedDB
           const sample = {
-            timestamp: now,
+            timestamp: now, // This is the keyPath - must be unique
             movement: Math.round(movement * 100) / 100,
             intensity,
             time: new Date(now).toLocaleTimeString(),
+            sessionId: sessionStartTimeRef.current ? sessionStartTimeRef.current.getTime() : now,
+            recorded: new Date(now).toISOString()
           };
 
+          // Add to in-memory array first
           movementSamplesRef.current.push(sample);
           
           // Keep only last 960 samples (8 hours at 30-second intervals)
@@ -354,7 +358,30 @@ const useSleepTracking = () => {
             movementSamplesRef.current = movementSamplesRef.current.slice(-960);
           }
 
-          await saveToStorage(STORE_NAMES.MOVEMENT, sample, sample.timestamp);
+          // Save to IndexedDB with error handling
+          try {
+            // For movement store, we don't pass a separate key since timestamp is the keyPath
+            await saveToStorage(STORE_NAMES.MOVEMENT, sample);
+            console.log('📈 Movement sample saved:', { timestamp: sample.timestamp, movement: sample.movement });
+          } catch (saveError) {
+            console.error('❌ Failed to save movement sample to IndexedDB:', saveError);
+            
+            // If it's a constraint error, try with a slightly different timestamp
+            if (saveError.name === 'ConstraintError' || saveError.message.includes('constraint')) {
+              console.log('🔄 Retrying with adjusted timestamp...');
+              const adjustedSample = {
+                ...sample,
+                timestamp: now + Math.random() // Add small random offset to avoid duplicates
+              };
+              
+              try {
+                await saveToStorage(STORE_NAMES.MOVEMENT, adjustedSample);
+                console.log('✅ Movement sample saved with adjusted timestamp');
+              } catch (retryError) {
+                console.error('❌ Failed to save movement sample even with adjusted timestamp:', retryError);
+              }
+            }
+          }
         } catch (error) {
           console.error('❌ Error sampling movement:', error);
         }
@@ -648,24 +675,69 @@ const useSleepTracking = () => {
 
       // Save completed session to storage
       try {
-        await saveToStorage(STORE_NAMES.SESSIONS, completedSession);
+        // Ensure the session has a valid structure for IndexedDB
+        const sessionToSave = {
+          ...completedSession,
+          // Ensure all required fields are present and valid
+          id: completedSession.id || Date.now(),
+          duration: Number(completedSession.duration) || 0,
+          isActive: false,
+          // Clean up movement data - save separately if too large
+          movementDataSummary: {
+            totalSamples: completedSession.movementData?.length || 0,
+            averageMovement: completedSession.movementData?.length > 0 ? 
+              completedSession.movementData.reduce((sum, s) => sum + (s.movement || 0), 0) / completedSession.movementData.length : 0,
+            restlessPeriods: completedSession.movementData?.filter(s => s.intensity === 'restless').length || 0
+          }
+        };
+
+        // Remove large movement array to avoid storage issues, keep summary
+        delete sessionToSave.movementData;
+
+        await saveToStorage(STORE_NAMES.SESSIONS, sessionToSave);
         console.log('✅ Session saved to storage successfully');
         
         // Update state immediately - replace any existing session with same ID
         setSleepData(prev => {
-          const filtered = prev.filter(s => s.id !== completedSession.id);
-          const updated = [...filtered, completedSession];
+          const filtered = prev.filter(s => s.id !== sessionToSave.id);
+          const updated = [...filtered, sessionToSave];
           console.log('📊 Updated sleep data state, total sessions:', updated.length);
           console.log('📊 Completed sessions:', updated.filter(s => !s.isActive).length);
           return updated;
         });
       } catch (saveError) {
         console.error('❌ Failed to save session to storage:', saveError);
-        // Still update state even if storage save fails
-        setSleepData(prev => {
-          const filtered = prev.filter(s => s.id !== completedSession.id);
-          return [...filtered, completedSession];
-        });
+        
+        // Fallback: try saving minimal session data
+        try {
+          const minimalSession = {
+            id: completedSession.id || Date.now(),
+            date: completedSession.date,
+            startTime: completedSession.startTime,
+            endTime: completedSession.endTime,
+            duration: Number(completedSession.duration) || 0,
+            sleepTime: completedSession.sleepTime,
+            wakeTime: completedSession.wakeTime,
+            actualWakeTime: completedSession.actualWakeTime,
+            isActive: false,
+            completedAt: completedSession.completedAt
+          };
+          
+          await saveToStorage(STORE_NAMES.SESSIONS, minimalSession);
+          console.log('✅ Minimal session saved as fallback');
+          
+          setSleepData(prev => {
+            const filtered = prev.filter(s => s.id !== minimalSession.id);
+            return [...filtered, minimalSession];
+          });
+        } catch (fallbackError) {
+          console.error('❌ Even minimal session save failed:', fallbackError);
+          // Still update state even if storage completely fails
+          setSleepData(prev => {
+            const filtered = prev.filter(s => s.id !== completedSession.id);
+            return [...filtered, completedSession];
+          });
+        }
       }
 
       // Reset all tracking state
@@ -808,4 +880,4 @@ const useSleepTracking = () => {
   };
 };
 
-export default useSleepTracking
+export default useSleepTracking;

@@ -16,13 +16,36 @@ const ScanScreen = () => {
     orientation: null
   })
   const [permissionErrors, setPermissionErrors] = useState([])
+  const [deviceCapabilities, setDeviceCapabilities] = useState({
+    hasDeviceMotion: false,
+    needsMotionPermission: false,
+    hasMicrophone: false
+  })
 
-  // Check sensor availability and permissions
+  // Check device capabilities first
   useEffect(() => {
-    checkSensorSupport()
+    checkDeviceCapabilities()
   }, [])
 
-  const checkSensorSupport = async () => {
+  const checkDeviceCapabilities = () => {
+    const capabilities = {
+      hasDeviceMotion: typeof DeviceMotionEvent !== 'undefined',
+      needsMotionPermission: false,
+      hasMicrophone: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+    }
+
+    // Check if motion permission is needed (iOS 13+)
+    if (capabilities.hasDeviceMotion) {
+      capabilities.needsMotionPermission = typeof DeviceMotionEvent.requestPermission === 'function'
+    }
+
+    setDeviceCapabilities(capabilities)
+    
+    // Now check sensor support based on capabilities
+    checkSensorSupport(capabilities)
+  }
+
+  const checkSensorSupport = async (capabilities = deviceCapabilities) => {
     const permissions = {
       motion: 'denied',
       microphone: 'denied',
@@ -31,14 +54,14 @@ const ScanScreen = () => {
     const errors = []
 
     // Check Device Motion API
-    if (typeof DeviceMotionEvent !== 'undefined') {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    if (capabilities.hasDeviceMotion) {
+      if (capabilities.needsMotionPermission) {
         // iOS 13+ - requires explicit permission
         try {
           const permission = await DeviceMotionEvent.requestPermission()
           permissions.motion = permission === 'granted' ? 'granted' : 'denied'
           if (permission !== 'granted') {
-            errors.push('Motion sensors require permission on iOS. Tap Settings to enable.')
+            errors.push('Motion sensors require permission on iOS. Tap "Request" to enable.')
           }
         } catch (error) {
           permissions.motion = 'denied'
@@ -53,7 +76,7 @@ const ScanScreen = () => {
     }
 
     // Check Microphone
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    if (capabilities.hasMicrophone) {
       permissions.microphone = 'available' // Will ask when needed
     } else {
       errors.push('Microphone is not supported on this browser.')
@@ -91,7 +114,11 @@ const ScanScreen = () => {
 
   // Request motion permission for iOS
   const requestMotionPermission = async () => {
-    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    if (!deviceCapabilities.hasDeviceMotion) {
+      return false
+    }
+
+    if (deviceCapabilities.needsMotionPermission) {
       try {
         const permission = await DeviceMotionEvent.requestPermission()
         setSensorPermissions(prev => ({ 
@@ -100,6 +127,7 @@ const ScanScreen = () => {
         }))
         return permission === 'granted'
       } catch (error) {
+        console.error('Motion permission error:', error)
         setSensorPermissions(prev => ({ ...prev, motion: 'denied' }))
         return false
       }
@@ -109,7 +137,9 @@ const ScanScreen = () => {
 
   // Real-time motion monitoring
   const startMotionMonitoring = () => {
-    if (sensorPermissions.motion !== 'granted') return null
+    if (!deviceCapabilities.hasDeviceMotion || sensorPermissions.motion !== 'granted') {
+      return null
+    }
 
     const handleMotion = (event) => {
       const acceleration = event.accelerationIncludingGravity
@@ -136,10 +166,12 @@ const ScanScreen = () => {
 
     window.addEventListener('devicemotion', handleMotion)
     window.addEventListener('deviceorientationabsolute', handleOrientation)
+    window.addEventListener('deviceorientation', handleOrientation) // Fallback
     
     return () => {
       window.removeEventListener('devicemotion', handleMotion)
       window.removeEventListener('deviceorientationabsolute', handleOrientation)
+      window.removeEventListener('deviceorientation', handleOrientation)
     }
   }
 
@@ -212,7 +244,7 @@ const ScanScreen = () => {
     
     // Request permissions first
     let motionAvailable = sensorPermissions.motion === 'granted'
-    if (!motionAvailable && typeof DeviceMotionEvent.requestPermission === 'function') {
+    if (!motionAvailable && deviceCapabilities.hasDeviceMotion && deviceCapabilities.needsMotionPermission) {
       motionAvailable = await requestMotionPermission()
     }
 
@@ -235,7 +267,7 @@ const ScanScreen = () => {
         lightLevel: estimateLightLevel(),
         motion: realTimeData.motion,
         phonePosition: analyzePhonePosition(),
-        recommendation: generateRecommendation(),
+        recommendation: '', // Will be set after generation
         sensorData: {
           motionDetected: motionAvailable && realTimeData.motion > 0,
           orientationSupported: realTimeData.orientation !== null,
@@ -244,11 +276,14 @@ const ScanScreen = () => {
         }
       }
       
+      // Generate recommendation based on results
+      results.recommendation = generateRecommendation(results)
+      
       setScanResults(results)
     } catch (error) {
       console.error('Scan error:', error)
       // Fallback to estimated data
-      setScanResults({
+      const fallbackResults = {
         noiseLevel: estimateNoiseLevel(),
         lightLevel: estimateLightLevel(),
         motion: realTimeData.motion || 0,
@@ -260,7 +295,8 @@ const ScanScreen = () => {
           microphoneUsed: false,
           estimatedValues: true
         }
-      })
+      }
+      setScanResults(fallbackResults)
     } finally {
       setIsScanning(false)
     }
@@ -297,9 +333,9 @@ const ScanScreen = () => {
   }
 
   // Generate smart recommendations
-  const generateRecommendation = () => {
-    const noise = scanResults?.noiseLevel || realTimeData.audio || estimateNoiseLevel()
-    const light = scanResults?.lightLevel || estimateLightLevel()
+  const generateRecommendation = (results) => {
+    const noise = results?.noiseLevel || realTimeData.audio || estimateNoiseLevel()
+    const light = results?.lightLevel || estimateLightLevel()
     const motion = realTimeData.motion || 0
     
     if (noise < 35 && light < 20 && motion < 2) return 'Excellent sleep environment detected!'
@@ -314,7 +350,7 @@ const ScanScreen = () => {
     setRealTimeData({ motion: 0, audio: 0, orientation: null })
   }
 
-  // Permission status component with action buttons
+  // Permission status component with action buttons - FIXED
   const PermissionStatus = () => (
     <div className="bg-gray-800 rounded-xl p-4 mb-6">
       <h3 className="font-semibold mb-3 flex items-center">
@@ -333,7 +369,10 @@ const ScanScreen = () => {
               {sensorPermissions.motion === 'granted' ? 'Allowed' : 
                sensorPermissions.motion === 'checking' ? 'Checking...' : 'Denied'}
             </span>
-            {sensorPermissions.motion === 'denied' && typeof DeviceMotionEvent.requestPermission === 'function' && (
+            {/* FIXED: Check device capabilities before showing request button */}
+            {sensorPermissions.motion === 'denied' && 
+             deviceCapabilities.hasDeviceMotion && 
+             deviceCapabilities.needsMotionPermission && (
               <button
                 onClick={requestMotionPermission}
                 className="text-xs bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded"
@@ -357,7 +396,7 @@ const ScanScreen = () => {
                sensorPermissions.microphone === 'available' ? 'Available' :
                sensorPermissions.microphone === 'checking' ? 'Checking...' : 'Denied'}
             </span>
-            {sensorPermissions.microphone === 'available' && (
+            {sensorPermissions.microphone === 'available' && deviceCapabilities.hasMicrophone && (
               <button
                 onClick={requestMicrophonePermission}
                 className="text-xs bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded"
@@ -373,6 +412,21 @@ const ScanScreen = () => {
           <span className="text-xs px-2 py-1 rounded bg-blue-900/30 text-blue-400">
             Time-based
           </span>
+        </div>
+      </div>
+      
+      {/* Device capabilities info */}
+      <div className="mt-4 p-3 bg-gray-700/50 rounded-lg">
+        <h4 className="text-sm font-medium text-gray-400 mb-2">Device Support:</h4>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${deviceCapabilities.hasDeviceMotion ? 'bg-green-400' : 'bg-red-400'}`}></div>
+            <span>Motion Sensors</span>
+          </div>
+          <div className="flex items-center space-x-2">
+            <div className={`w-2 h-2 rounded-full ${deviceCapabilities.hasMicrophone ? 'bg-green-400' : 'bg-red-400'}`}></div>
+            <span>Microphone</span>
+          </div>
         </div>
       </div>
       
