@@ -79,14 +79,18 @@
           "sizes": "96x96"
         }
       ]
-    }
-  ],
-  "screenshots": [
+    },
     {
-      "src": "/screenshots/mobile-1.png",
-      "sizes": "390x844",
-      "type": "image/png",
-      "form_factor": "narrow"
+      "name": "Environment Scan",
+      "short_name": "Scan",
+      "description": "Analyze your sleep environment",
+      "url": "/?action=scan",
+      "icons": [
+        {
+          "src": "/icons/icon-96x96.png",
+          "sizes": "96x96"
+        }
+      ]
     }
   ]
 }
