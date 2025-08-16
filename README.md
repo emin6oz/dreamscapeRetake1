@@ -36,6 +36,14 @@ cd dreamscapeRetake1
 # Install dependencies
 npm install
 
+# Vite.config.js
+make sure https is set to false:
+server: {
+    host: true,
+    port: 5173,
+    https: false <== for developmenet testing
+  },
+
 # Start development server
 npm run dev
 
