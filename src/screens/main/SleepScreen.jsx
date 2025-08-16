@@ -4,7 +4,7 @@ import useSleepTracking from '../../hooks/useSleepTracking'
 import { formatTime12Hour } from '../../utils/timeUtils'
 import CircularClock from '../../components/ui/CircularClock'
 import Button from '../../components/common/Button'
-import SleepTrackingInstructions from '../../components/ui/SleepTrackingInstructions'
+// import SleepTrackingInstructions from '../../components/ui/SleepTrackingInstructions'
 
 const SleepScreen = () => {
   const {
@@ -20,7 +20,7 @@ const SleepScreen = () => {
 
   const [showSleepTimePicker, setShowSleepTimePicker] = useState(false)
   const [showWakeTimePicker, setShowWakeTimePicker] = useState(false)
-  const [showInstructions, setShowInstructions] = useState(false)
+  // const [showInstructions, setShowInstructions] = useState(false)
   const [isStarting, setIsStarting] = useState(false)
 
   // Handle time change and close picker
@@ -232,12 +232,12 @@ const SleepScreen = () => {
         )}
 
         {/* Instructions Modal */}
-        {showInstructions && (
+        {/* {showInstructions && (
           <SleepTrackingInstructions
             onClose={() => setShowInstructions(false)}
             onStartTracking={handleStartTracking}
           />
-        )}
+        )} */}
       </div>
     </div>
   )
