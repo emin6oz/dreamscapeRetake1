@@ -1,6 +1,3 @@
-// utils/notifications.js
-// Modern PWA-ready NotificationManager with iOS fallback
-
 export class NotificationManager {
   constructor() {
     this.permission = 'default';
@@ -65,7 +62,7 @@ export class NotificationManager {
       }
     }
 
-    // Fallback to in-page notifications (iOS / unsupported)
+   
     return this.showFallbackNotification(title, options.body);
   }
 

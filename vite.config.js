@@ -19,7 +19,7 @@ export default defineConfig({
               cacheName: 'google-fonts-cache',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
+                maxAgeSeconds: 60 * 60 * 24 * 365 
               }
             }
           },
@@ -30,7 +30,7 @@ export default defineConfig({
               cacheName: 'gstatic-fonts-cache',
               expiration: {
                 maxEntries: 10,
-                maxAgeSeconds: 60 * 60 * 24 * 365 // 1 year
+                maxAgeSeconds: 60 * 60 * 24 * 365 
               }
             }
           }
@@ -90,7 +90,7 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
-    https: true
+    https: false
   },
   build: {
     target: 'esnext',

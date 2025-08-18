@@ -39,7 +39,6 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      // Simulate API call
       const userData = {
         id: Date.now(),
         email,
@@ -57,7 +56,6 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (email, password, name) => {
     try {
-      // Simulate API call
       const userData = {
         id: Date.now(),
         email,

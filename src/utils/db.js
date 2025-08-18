@@ -1,4 +1,3 @@
-// utils/db.js
 import { openDB } from 'idb'
 
 const DB_NAME = 'sleepTrackerDB'
@@ -9,7 +8,7 @@ const STORE_NAMES = {
   SETTINGS: 'settings'
 }
 
-// Initialize DB
+
 export async function initDB() {
   return openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
